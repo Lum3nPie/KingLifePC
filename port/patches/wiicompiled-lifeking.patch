@@ -8361,6 +8361,70 @@ index 0000000..ca552ac
 +FOREIGN_GAME_NATIVE(WFCPGD, 8010470C, LifeKing_GXSetDrawDone_HLE, void, (), ());
 +FOREIGN_GAME_NATIVE(WFCPGD, 801047A4, LifeKing_GXWaitDrawDone_HLE, void, (), ());
 +
+diff --git a/runtime/src/hle/os/os_interrupt.cpp b/runtime/src/hle/os/os_interrupt.cpp
+index 56f6871..7eea5ac 100644
+--- a/runtime/src/hle/os/os_interrupt.cpp
++++ b/runtime/src/hle/os/os_interrupt.cpp
+@@ -7,6 +7,8 @@
+ #include <cstring>
+ #include <iostream>
+ #include <mutex>
++#include <chrono>
++#include "guest_abi/guest_region.h"
+ 
+ #include "abi_bridge.h"
+ #include "memory.h"
+@@ -57,10 +59,40 @@ extern "C" int32_t OS__DisableInterrupts_801a65ac()
+     return previous ? 1 : 0;
+ }
+ 
++// LifeKing: on the console the audio interrupt fires as soon as interrupts are enabled again, even in
++// the middle of a long frame. The runtime only served audio between frames, so a slow frame (Chime,
++// a building going up) left the music short of samples and slowed it down. Serve it here too, at
++// most every 4 ms, never from inside the audio callback itself.
++static void LifeKing_ServeAudioAtInterruptEnable()
++{
++    static thread_local bool inside = false;
++    static std::atomic<int64_t> lastUs{0};
++    if (inside || !::GuestRegion::IsForeignGame()) {
++        return;
++    }
++    const int64_t now = std::chrono::duration_cast<std::chrono::microseconds>(
++                            std::chrono::steady_clock::now().time_since_epoch()).count();
++    if (now - lastUs.load(std::memory_order_relaxed) < 4000) {
++        return;
++    }
++    lastUs.store(now, std::memory_order_relaxed);
++    inside = true;
++    try {
++        Audio_HLE_PollDeferred();
++    } catch (...) {
++        inside = false;
++        throw;
++    }
++    inside = false;
++}
++
+ extern "C" int32_t OS__RestoreInterrupts_801a65d4(int32_t level)
+ {
+     const bool prev = g_interrupts_enabled.exchange(level != 0);
+     UpdateCurrentContextInterruptFlag(level != 0);
++    if (level != 0 && !prev) {
++        LifeKing_ServeAudioAtInterruptEnable();
++    }
+     return prev ? 1 : 0;
+ }
+ 
+@@ -68,6 +100,9 @@ extern "C" int32_t OS__EnableInterrupts_801a65c0()
+ {
+     const bool prev = g_interrupts_enabled.exchange(true);
+     UpdateCurrentContextInterruptFlag(true);
++    if (!prev) {
++        LifeKing_ServeAudioAtInterruptEnable();
++    }
+     return prev ? 1 : 0;
+ }
+ 
 diff --git a/runtime/src/hle/os/os_thread.cpp b/runtime/src/hle/os/os_thread.cpp
 index d2423e6..e764565 100644
 --- a/runtime/src/hle/os/os_thread.cpp
@@ -9229,6 +9293,79 @@ index cd236a9..5831036 100644
  }
  PPC_NATIVE_OVERRIDE_VOID(801BABAC, VIGetNextField_HLE_801babac, (CpuContext* ctx), (ctx));
  
+diff --git a/runtime/src/lifeking_profiler.cpp b/runtime/src/lifeking_profiler.cpp
+new file mode 100644
+index 0000000..9dcb105
+--- /dev/null
++++ b/runtime/src/lifeking_profiler.cpp
+@@ -0,0 +1,67 @@
++// LifeKing: opt-in sampling profiler. Set LIFEKING_PROFILE=1: a host thread samples the main
++// thread's instruction pointer every millisecond and, at exit, writes the counts per address to
++// %TEMP%\lifeking_profile.txt (map them to functions with llvm-nm on WiiCompiled.exe).
++#if defined(_WIN32)
++#include <windows.h>
++
++#include <atomic>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <map>
++#include <mutex>
++#include <thread>
++
++namespace {
++
++std::atomic<bool> g_running{false};
++std::mutex g_mutex;
++std::map<uint64_t, uint32_t> g_counts;
++HANDLE g_target = nullptr;
++uint64_t g_base = 0;
++
++void Dump() {
++    char path[MAX_PATH];
++    const DWORD n = GetTempPathA(MAX_PATH, path);
++    if (n == 0 || n > MAX_PATH - 32) return;
++    std::strcat(path, "lifeking_profile.txt");
++    FILE* f = std::fopen(path, "w");
++    if (!f) return;
++    std::lock_guard<std::mutex> lock(g_mutex);
++    std::fprintf(f, "# image base 0x%llx\n", static_cast<unsigned long long>(g_base));
++    for (const auto& [rip, count] : g_counts) {
++        std::fprintf(f, "%llx %u\n", static_cast<unsigned long long>(rip - g_base), count);
++    }
++    std::fclose(f);
++}
++
++struct Starter {
++    Starter() {
++        const char* env = std::getenv("LIFEKING_PROFILE");
++        if (env == nullptr || env[0] == '0') return;
++        g_base = reinterpret_cast<uint64_t>(GetModuleHandleA(nullptr));
++        DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &g_target,
++                        THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, 0);
++        g_running = true;
++        std::atexit(Dump);
++        std::thread([] {
++            unsigned ticks = 0;
++            while (g_running) {
++                Sleep(1);
++                if (++ticks % 5000 == 0) Dump();  // also written while running: the window may be killed
++                if (SuspendThread(g_target) == static_cast<DWORD>(-1)) continue;
++                CONTEXT ctx;
++                std::memset(&ctx, 0, sizeof(ctx));
++                ctx.ContextFlags = CONTEXT_CONTROL;
++                if (GetThreadContext(g_target, &ctx)) {
++                    std::lock_guard<std::mutex> lock(g_mutex);
++                    ++g_counts[ctx.Rip];
++                }
++                ResumeThread(g_target);
++            }
++        }).detach();
++    }
++} g_starter;
++
++} // namespace
++#endif
 diff --git a/runtime/src/main.cpp b/runtime/src/main.cpp
 index 56bec9f..ab43f13 100644
 --- a/runtime/src/main.cpp
