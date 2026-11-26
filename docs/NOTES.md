@@ -1,5 +1,10 @@
 # Working notes: My Life as a King (WFCPGD)
 
+## Project goal (from Liara)
+A bootable game, identical to the original, plus Xbox Series and DualSense controller support.
+- "Identical" is the matching decomp: `ninja` must keep producing the original main.dol (SHA-1 check).
+- Controller support is an addition on top, so it has to live outside the matching build (a separate non-matching build or a PC port layer). Prioritise the input layer (WPAD/KPAD and the game code that reads them) when choosing what to decompile.
+
 Hand-written notes. Keep them short and up to date. The generated index is in `docs/index/`.
 
 ## Game and files
@@ -28,7 +33,9 @@ Hand-written notes. Keep them short and up to date. The generated index is in `d
 - main + __sinit (0x8000C924), rodata 0x80256900 (0x78: "main", "GX", "settings_master.xml", basic_string error messages).
 - Two static `WCThread` objects at 0x802B1200 / 0x802B1214, attached to the current thread ("main") and to the GX thread ("GX") with `WCThread::Attach`.
 - Most of main is an inlined MSL/EWL `std::string` (12 bytes, bit 31 of word 0 = long mode, SSO capacity 11, growth `(len+16)&~15`, errors printed with fprintf(stderr)+abort since exceptions are off). Weak string helpers follow the sinit: fn_8000C958 (default ctor), dtor_8000C978, fn_8000C9D4 (replace), fn_8000CC7C (allocate).
-- Matching it needs a reconstructed MSL `<string>` that inlines the same way.
+- Matching it needs a reconstructed MSL `<string>` that inlines the same way. WIP in `include/msl/string` (based on TheLastStoryDecomp's CC0 reconstruction). `do_replace`, `reserve` and the layout look right.
+- Inlining puzzle (not solved): the original inlines the `const char*` ctor and `reserve` into main (reserve's message is in main's string pool), but calls `__zero` (fn_8000C958), the dtor (dtor_8000C978) and `allocator::allocate` (fn_8000CC7C, its message is a weak `@STRING@` object in .data, so it is an in-class inline function). With -O4,s nothing big inlines; with -O4,p in-class members inline (too much) and out-of-class template members do not. main.cpp is configured NonMatching with -O4,p until this is solved.
+- The class at 0x800CFE4C (vtable 0x80281B38) inlines `std::vector` growth ("vector length error"), same blocker.
 
 ## Game classes found
 - `WCThread` (src/game/WCThread.cpp, 0x800CFC78): wraps an OSThread (fields: own thread, arg, stack, current thread, name).

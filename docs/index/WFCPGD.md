@@ -7,7 +7,7 @@ Lookups: `grep <name or address> docs/index/functions.tsv`, `docs/index/units.ts
 ## Totals
 
 - Symbols: 18051 (10307 functions, 382 with real names)
-- Units: 676 with code (4 hand-split)
+- Units: 675 with code (5 hand-split)
 - Code: 2401892 bytes, decompiled and matching: 1108 bytes
 
 ## DOL sections
@@ -131,9 +131,8 @@ In game code, `auto_fn_*` units are `__sinit` functions: each one marks the end 
 
 | Start | End | Code | Funcs | Matched | Unit |
 |---|---|---|---|---|---|
-| 0x8000C680 | 0x8000C924 | 676 | 1 | 0% | auto_03_8000C680_text |
-| 0x8000C924 | 0x8000C958 | 52 | 1 | 0% | auto_fn_8000C924_text (sinit) |
-| 0x8000C958 | 0x800233D4 | 92796 | 418 | 0% | auto_03_8000C958_text |
+| 0x8000C680 | 0x8000CCD8 | 1624 | 6 | 0% | game/main |
+| 0x8000CCD8 | 0x800233D4 | 91900 | 414 | 0% | auto_03_8000CCD8_text |
 | 0x800233D4 | 0x8002348C | 184 | 1 | 0% | auto_fn_800233D4_text (sinit) |
 | 0x8002348C | 0x800339C8 | 66876 | 330 | 0% | auto_03_8002348C_text |
 | 0x800339C8 | 0x80033A10 | 72 | 1 | 0% | auto_fn_800339C8_text (sinit) |
@@ -163,6 +162,7 @@ In game code, `auto_fn_*` units are `__sinit` functions: each one marks the end 
 
 ## Hand-split units
 
+- game/main: 0x8000C680-0x8000CCD8, 0% matched
 - game/WCThread: 0x800CFC78-0x800CFE4C, 100% matched
 - revolution/os/PPCArch: 0x800DDCB0-0x800DDE14, 100% matched
 - Runtime.PPCEABI.H/global_destructor_chain: 0x8010967C-0x80109728, 100% matched

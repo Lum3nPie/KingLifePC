@@ -336,6 +336,7 @@ config.libs = [
         "game",
         [
             Object(Matching, "game/WCThread.cpp"),
+            Object(NonMatching, "game/main.cpp", cflags=[*cflags_game, "-O4,p"]),
         ],
     ),
 ]

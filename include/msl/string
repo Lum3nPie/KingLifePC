@@ -1,0 +1,235 @@
+#ifndef MSL_STRING
+#define MSL_STRING
+
+// Partial reconstruction of the MSL C++ std::basic_string used by the game.
+// Based on TheLastStoryDecomp's include/std/string.h (CC0-1.0), adapted where this game differs.
+
+#include <msl/msl_common.h>
+
+namespace std {
+
+struct input_iterator_tag {};
+struct forward_iterator_tag : public input_iterator_tag {};
+struct bidirectional_iterator_tag : public forward_iterator_tag {};
+struct random_access_iterator_tag : public bidirectional_iterator_tag {};
+
+template <class T>
+struct char_traits {
+    static unsigned long length(const T* s) { return strlen(s); }
+};
+
+template <class T>
+class allocator {
+public:
+    typedef __msl_size_t size_type;
+
+    T* allocate(size_type n, const void* hint = 0) {
+        T* p = (T*)::operator new(n * sizeof(T));
+        if (p == 0) {
+            __msl_error("Memory allocation failure");
+        }
+        return p;
+    }
+    void deallocate(T* p, size_type) { ::operator delete(p); }
+};
+
+template <class T, class Traits = char_traits<T>, class Alloc = allocator<T> >
+class basic_string {
+public:
+    typedef __msl_size_t size_type;
+    enum { __min_cap = (12 - 1) / sizeof(T) };
+
+    basic_string() { __zero(); }
+    basic_string(const T* s) {
+        __zero();
+        size_type n = Traits::length(s);
+        reserve(n);
+        do_replace(0, 0, s, s + n, random_access_iterator_tag());
+    }
+    ~basic_string() {
+        if (is_long()) {
+            ::operator delete(mLong.mData);
+        }
+    }
+
+    size_type size() const { return !is_long() ? (mShort.mSize & 0x7F) : mLong.mSize; }
+    size_type max_size() const { return 0x7FFFFFFE; }
+
+    void reserve(size_type res_arg);
+
+    basic_string& do_replace(size_type pos, size_type n1, const T* j1, const T* j2, random_access_iterator_tag tag);
+
+private:
+    static void __assign(T& c1, const T& c2) { c1 = c2; }
+    static const size_type& __min(const size_type& a, const size_type& b) { return (b < a) ? b : a; }
+    bool is_long() const { return *(const unsigned long*)this >> 31; }
+    void __zero() {
+        __msl_size_t(&a)[3] = mRaw.mWords;
+        for (unsigned int i = 0; i < 3; i++) {
+            a[i] = 0;
+        }
+    }
+    Alloc& alloc() { return *(Alloc*)this; }
+
+    struct Long {
+        __msl_size_t mCap;
+        __msl_size_t mSize;
+        T* mData;
+    };
+    struct Short {
+        unsigned char mSize;
+        T mData[__min_cap];
+    };
+    struct Flags {
+        unsigned long mIsLong : 1;
+        unsigned long mCap : 31;
+        unsigned long mSize;
+        T* mData;
+    };
+    struct ShortFlags {
+        unsigned char mIsLong : 1;
+        unsigned char mSize : 7;
+    };
+    struct Raw {
+        __msl_size_t mWords[3];
+    };
+    union {
+        Raw mRaw;
+        Long mLong;
+        Short mShort;
+        Flags mFlags;
+        ShortFlags mShortFlags;
+    };
+};
+
+template <class T, class Tr, class A>
+void basic_string<T, Tr, A>::reserve(size_type res_arg) {
+        if (res_arg > max_size()) {
+            __msl_error("basic_string::reserve length_error");
+        }
+        size_type cap;
+        size_type sz;
+        bool was_long = mFlags.mIsLong;
+        if (!was_long) {
+            sz = mShortFlags.mSize;
+            cap = __min_cap;
+        } else {
+            sz = mLong.mSize;
+            cap = mFlags.mCap;
+        }
+        if (res_arg < sz) {
+            res_arg = sz;
+        }
+        res_arg = (res_arg + 1 <= __min_cap) ? (size_type)__min_cap : (res_arg + 16) & ~15;
+        if (res_arg != cap) {
+            T* new_data;
+            T* p;
+            bool now_long;
+            if (res_arg == __min_cap) {
+                now_long = false;
+                new_data = mShort.mData;
+                p = mLong.mData;
+            } else {
+                if (res_arg > cap) {
+                    new_data = alloc().allocate(res_arg);
+                } else {
+                    new_data = alloc().allocate(res_arg);
+                    if (new_data == 0) {
+                        return;
+                    }
+                }
+                now_long = true;
+                p = was_long ? mLong.mData : mShort.mData;
+            }
+            memmove(new_data, p, sz * sizeof(T));
+            new_data[sz] = 0;
+            if (was_long) {
+                ::operator delete(p);
+            }
+            mFlags.mIsLong = now_long;
+            if (!now_long) {
+                mShortFlags.mSize = sz;
+            } else {
+                mLong.mData = new_data;
+                mLong.mSize = sz;
+                mFlags.mCap = res_arg;
+            }
+        }
+    }
+
+template <class T, class Tr, class A>
+basic_string<T, Tr, A>& basic_string<T, Tr, A>::do_replace(size_type pos, size_type n1, const T* j1, const T* j2,
+                                                          random_access_iterator_tag tag) {
+    bool was_long = mFlags.mIsLong;
+    size_type new_sz;
+    T* p;
+    size_type sz;
+    size_type cap;
+    if (!was_long) {
+        p = mShort.mData;
+        cap = __min_cap;
+        sz = mShortFlags.mSize;
+    } else {
+        p = mLong.mData;
+        cap = mFlags.mCap;
+        sz = mLong.mSize;
+    }
+    if (pos > sz) {
+        __msl_error("basic_string: out_of_range");
+    }
+    size_type rlen = __min(n1, sz - pos);
+    size_type n2 = j2 - j1;
+    if (n2 > max_size() || sz - rlen > max_size() - n2) {
+        __msl_error("basic_string: length_error");
+    }
+    new_sz = n2 + (sz - rlen);
+    size_type tail = sz - (pos + rlen);
+    if (new_sz >= cap) {
+        cap = (cap + 15) & ~15;
+        while (cap < new_sz + 1) {
+            cap = (cap * 2 + 15) & ~15;
+        }
+        T* new_data = alloc().allocate(cap);
+        if (pos != 0) {
+            memcpy(new_data, p, pos * sizeof(T));
+        }
+        T* d = new_data + pos;
+        memmove(d, j1, (j2 - j1) * sizeof(T));
+        if (tail != 0) {
+            memcpy(d + n2, p + pos + rlen, tail * sizeof(T));
+        }
+        __assign(new_data[new_sz], T());
+        if (was_long) {
+            ::operator delete(p);
+        } else {
+            mFlags.mIsLong = 1;
+        }
+        mLong.mData = new_data;
+        mLong.mSize = new_sz;
+        mFlags.mCap = cap;
+    } else {
+        basic_string tmp;
+        if (tail != 0 && p + pos + n2 < j2 && j2 <= p + sz) {
+            size_type tsz = tmp.size();
+            tmp.do_replace(0, tsz, j1, j2, random_access_iterator_tag());
+            j1 = tmp.mFlags.mIsLong ? tmp.mLong.mData : tmp.mShort.mData;
+        }
+        if (tail != 0) {
+            memmove(p + pos + n2, p + pos + rlen, tail * sizeof(T));
+        }
+        memmove(p + pos, j1, n2 * sizeof(T));
+        __assign(p[new_sz], T());
+        if (!was_long) {
+            mShortFlags.mSize = new_sz;
+        } else {
+            mLong.mSize = new_sz;
+        }
+    }
+    return *this;
+}
+
+typedef basic_string<char> string;
+
+} // namespace std
+
+#endif
