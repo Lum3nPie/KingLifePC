@@ -33,3 +33,18 @@ compile_commands.json
 # Miscellaneous
 /*.txt
 *.exe
+
+# PC port: local clones, game data and build output
+port/Wiicompiled/
+port/lifeking-data/
+port/ref-hmap/
+port/*.log
+port/run.out
+port/run.err
+*.app
+*.tmd
+*.tik
+*.cert
+*.brres
+*.arc
+*.brsar

@@ -1,0 +1,41 @@
+schema_version: 1
+workspace_root: ../..
+
+project:
+  id: lifeking-wfcp
+  display_name: My Life as a King (WiiWare PAL)
+  game_id: WFCP
+  region: P
+
+memory:
+  base: 0x80000000
+  size: 0x01800000
+  sda_base: 0x803A47A0
+  sda2_base: 0x803A6660
+
+inputs:
+  dol:
+    # NAND content 00000001.app of title 00010001-57464350 (local copy, never committed).
+    path: Assets/lifeking/main.dol
+    sha256: 99852f9237e881280b2b88d01bbacac3d94cdf59d7d16c80f3a2c1344f7ab30b
+
+translation:
+  entry_points:
+    - 0x8000403C
+  # Function boundaries exported from the KingLifePC decomp (docs/index/functions.tsv).
+  function_map:
+    path: projects/lifeking/MAP.txt
+  allow_unsupported_instructions: true
+
+runtime:
+  # Empty on purpose: the stock runtime/src registers Mario Kart Wii addresses.
+  native_registration_root: projects/lifeking/native
+  native_index: projects/lifeking/native-index.json
+  native_abi_directories: []
+
+output:
+  root: generated
+  functions: functions
+  runtime_config: RuntimeConfig.h
+  data_initializer: data_sections_init.cpp
+  base_manifest: base/base_manifest.json

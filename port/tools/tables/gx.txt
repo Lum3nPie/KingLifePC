@@ -1,0 +1,12 @@
+# PAL (MKW)   ours        what
+0x80343740  0x802F45C0  FifoObj (GXInit)
+0x803886C8  0x8039F2E8  gx, the pointer to __GXData (dtk calls it __GXData)
+0x803437C0  0x802F4640  __GXData structure (FifoObj block, same offset as MKW: +0x80)
+0x80343DC0  0x802F4C40  GPFifo (GXSetGPFifo)
+0x80343DE4  0x802F4C64  CPUFifo (GXSetCPUFifo)
+0x803867B0  0x8039E1E0  CPGPLinked (byte, GXSetCPUFifo)
+0x803867B1  0x8039E1E1  GPFifoReady (byte, GXSetGPFifo)
+0x803867C0  0x8039E1F0  thread queue the CP interrupt wakes (GXCPInterruptHandler)
+0x803867C4  0x8039E1F4  __GXCurrentThread (GXCPInterruptHandler)
+0x803867D0  0x8039E200  FinishQueue (GXDrawDone)
+0x803867D8  0x8039E208  DrawDone (GXDrawDone); callback at +4 (GXSetDrawDoneCallback)

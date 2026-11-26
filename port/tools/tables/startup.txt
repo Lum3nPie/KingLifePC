@@ -1,0 +1,6 @@
+# PAL (MKW)   ours        what
+0x800060A4  0x8000403C  __start, the DOL entry point
+0x80244DE0  0x80256800  .ctors, the table of static constructors
+0x80244EA0  0x802568C0  the end of .ctors (start of .dtors)
+0x8088F400  -           .ctors of StaticR.rel: no REL here
+0x8088F704  -           end of StaticR.rel's .ctors

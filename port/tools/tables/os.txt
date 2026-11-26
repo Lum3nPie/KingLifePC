@@ -1,0 +1,17 @@
+# PAL (MKW)   ours        what  (ours from dtk's names in the decomp symbols.txt)
+0x80347498  0x802D8C58  DefaultThread
+0x803477B0  0x802D8F70  RunQueue[32] (right after DefaultThread; OSResumeThread uses it)
+0x803478B0  0x802D9070  IdleContext (right after RunQueue)
+0x80385AE0  0x8039D258  SwitchThreadCallback
+0x80386918  0x8039DDA0  Reschedule
+0x8038691C  0x8039DDA4  RunQueueHint
+0x80386920  0x8039DDA8  RunQueueBits
+0x803868A0  0x8039DD28  AlarmQueue
+0x803868F8  0x8039DD80  InterruptHandlerTable
+0x80386934  0x8039DDBC  StmReady
+0x80386938  0x8039DDC0  StmImDesc (/dev/stm/immediate)
+0x8038693C  0x8039DDC4  StmEhDesc (/dev/stm/eventhook)
+0x80386940  0x8039DDC8  StmEhRegistered
+0x80386948  0x8039DDD0  PowerCallback
+0x80347130  0x802D88F0  the word OSCreateThread tests before its slow path (__OSErrorTable + 0x40)
+0x80385AA8  0x8039D228  the word OSCreateThread masks with 0xF8 (OSCreateThread)

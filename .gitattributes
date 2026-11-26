@@ -11,3 +11,6 @@
 
 # decomp-toolkit writes files with LF
 config/**/*.txt  text eol=lf
+
+# Keep patches byte-exact so git apply works
+port/patches/*.patch -text

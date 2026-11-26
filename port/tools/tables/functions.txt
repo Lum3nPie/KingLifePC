@@ -1,0 +1,22 @@
+# Functions the natives call, matched by name in our symbols
+0x80126948  0x800FE448  __AXDSPInitCallback (the task's init_cb, at 0x28)
+0x80126954  0x800FE454  __AXDSPResumeCallback (res_cb, at 0x2C)
+0x801269A8  0x800FE4A8  __AXDSPRequestCallback (done_cb, at 0x30)
+0x8016C668  0x80102980  GXCPInterruptHandler
+0x8016ECCC  0x80104A0C  GXTokenInterruptHandler
+0x8016ED94  0x80104AD4  GXFinishInterruptHandler
+0x8016ED50  0x80104A90  GXSetDrawDoneCallback (only Mario Kart Wii's EGG code calls it from WiiCompiled)
+0x8019AA60  0x800ECE28  C_MTXPerspective (wide picture builds 3D cameras wider)
+0x801A20BC  0x800E0E10  OSInitContext
+0x801A0620  0x800DF374  InsertAlarm (the runtime calls it to queue an alarm)
+0x801A1ED8  0x800E0C2C  OSSaveContext (the scheduler calls it before switching threads)
+0x801A961C  0x800E78FC  __OSThreadInit (a native runs it after its own start-up)
+0x801AADE0  0x800E9020  __OSTimeToSystemTime (for the fire times of alarms)
+0x801A8088  0x800E63B4  __OSUnlockAllMutex
+0x801AA0F0  0x800E83D0  OSExitThread (the return address of every new thread)
+0x801ABC0C  0x800E9BAC  __OSDefaultPowerCallback
+0x80192F7C  0x80129D04  IPCInit
+0x8015DF1C  0x800ED51C  __DVDFSInit
+0x80169BCC  0x80128528  ISFS_OpenLib
+0x80193040  0x80129DC8  IPCSetBufferLo
+0x801949B8  0x8012B658  iosCreateHeap

@@ -1,0 +1,14 @@
+# PAL (MKW)   ours        what  (sbss block placed by PostCB/PreCB/queue/count, same layout as MKW)
+0x80386B38  0x8039DF20  IsInitialized (by offset from PostCB)
+0x80386B44  0x8039DF2C  the guard VIInit sets (by offset)
+0x80386BA0  0x8039DF88  next frame buffer for the retrace interrupt (by offset)
+0x80386BA8  0x8039DF90  CurrTvMode (VIGetTvFormat)
+0x80386BB4  0x8039DF9C  PostCB (VISetPostRetraceCallback)
+0x80386BB8  0x8039DFA0  PreCB (VISetPreRetraceCallback)
+0x80386BC0  0x8039DFA8  retrace thread queue (VIWaitForRetrace)
+0x80386BE4  0x8039DFCC  retrace count (VIGetRetraceCount)
+0x80350864  0x802DEB74  HorVer: picture width (HorVer = 0x802DEB70, bufAddr at +0x30 in VISetNextFrameBuffer)
+0x80350866  0x802DEB76  HorVer: picture height
+0x80350872  0x802DEB82  HorVer: frame buffer width
+0x8035087C  0x802DEB8C  HorVer: frame buffer height
+0x80350890  0x802DEBA0  HorVer: frame buffer given to VISetNextFrameBuffer

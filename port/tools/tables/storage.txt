@@ -1,0 +1,22 @@
+# PAL (MKW)   ours        what
+0x80343230  0x802DE630  WaitingQueue[4]
+0x803434E0  0x802DE8E0  dvdContexts
+0x80386668  0x8039DE54  ResumeFromHere
+0x80386670  0x8039DE48  PausingFlag
+0x803866A0  0x8039DE7C  DVDInitialized
+0x803866F0  0x8039DED0  executing
+0x80346D20  0x802F7D00  s_homeDir (NANDInit)
+0x80385920  0x8039D4A8  __fsFd (ISFS handle of /dev/fs)
+0x803867EC  0x8039D260  IpcBufferLo
+0x803867F0  0x8039DDB0  IpcBufferHi
+0x80386848  0x8039E340  s_libState (NAND state)
+0x80385928  0x8039D4B0  __ISFS_path "/dev/fs" (ISFS_OpenLib)
+0x80386770  0x8039E2F8  __fsInitialized, the ISFS heap is made (ISFS_OpenLib)
+0x80386774  0x8039E2FC  __devfs, where the ISFS heap starts (ISFS_OpenLib)
+0x8038677C  0x8039E304  lo, low end of the IPC arena ISFS takes its heap from
+0x80386780  0x8039E308  hi, high end of that arena
+0x80386784  0x8039E30C  hId, the ISFS heap handle
+0x80386720  0x8039DF00  freeDvdContext, the context the low level uses next
+0x80386724  0x8039DF04  the contexts are set up (byte, by offset from the next one)
+0x80386725  0x8039DF05  DVDLowInit ran (byte, DVDLowInit/DVDLowFinalize)
+0x803866A8  -           what __DVDPrepareReset waits on: not looked up yet

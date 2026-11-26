@@ -1,0 +1,21 @@
+# PAL (MKW)   ours        what
+0x80386448  0x8039E020  AIInit's flag (AIInit)
+0x8038644C  0x8039E024  DMA callback running (__AIDHandler)
+0x8038647C  0x8039E054  DMA callback on its own stack (__AIDHandler)
+0x80386480  0x8039E058  the DMA callback (__AIDHandler)
+0x80386608  0x8039E198  DSPInit's flag (DSPCheckInit)
+0x80386610  0x8039E1A0  DSPAssertTask: a task waiting (by offset)
+0x80386614  0x8039E1A4  DSPAssertTask: the task asked for (by offset)
+0x80386618  0x8039E1A8  the word DSPInit clears
+0x8038661C  0x8039E1AC  __DSP_curr_task (DSPInit)
+0x80386620  0x8039E1B0  __DSP_first_task (DSPAddTask)
+0x80386624  0x8039E1B4  the running task (DSPInit)
+0x801269B8  0x800FE4B8  req_cb of AX's DSP task (task +0x34)
+0x802F81A0  0x802E2DA0  AX's DSP task (__AXOutInitDSP)
+0x8027F820  0x80293400  AX's microcode (task +0x0C)
+0x802F8200  0x802E2E00  the DRAM the task sends the DSP (task +0x18)
+0x80385800  0x8039D340  DSP start address of the microcode (task +0x24)
+0x80385802  0x8039D342  DSP resume address (task +0x26)
+0x80385804  0x8039D344  microcode length (task +0x10)
+0x80386524  0x8039E0FC  flag __AXOutInitDSP clears before adding the task
+0x80386528  0x8039E100  set by __AXDSPInitCallback; __AXOutInitDSP waits on it
