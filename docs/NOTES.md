@@ -47,6 +47,11 @@ Other game input code lives around 0x80041500-0x80045000. So an Xbox/DualSense p
 - First boot (2026-11-26): translation 10,367 functions, 0 unsupported instructions; WiiCompiled.exe builds (D3D12 via aurora), loads the DOL sections, starts at `__start`, then stops on the first hardware write: 0xCC003004 (PI interrupt mask) from OS init. Also "Executed 0 main DOL static constructors" (ctor table discovery to check).
 - The WiiCompiled runtime is tied to Mario Kart Wii: ~150 hard-coded guest addresses in `runtime/src` (HLE of OS, GX, AX, input, storage). Those hooks must be re-targeted to this game's SDK functions, using the decomp index to find them.
 
+### Port status (end of 2026-11-26 session)
+- WiiCompiled clone is on local branch `lifeking` = upstream 27ff3b0 + HarvestMoonAnimalParadeRecomp's foreign-game patches (cloned in `port/ref-hmap`, GPL) + our translator budget edit + our layer files.
+- `port/lk-tools/make_layer.py` (our own tool) writes the layer: 321 of 787 natives placed by name, startup table in `port/lk-tools/tables/startup.txt`.
+- Left to do: the SDK variable tables (OS, GX, VI, audio, storage, SC: ~110 rows, see `port/ref-hmap/wiicompiled/RBIEE9-*-addresses.txt` for the list of what is needed and how they found each), then retranslate (`native_registration_root: projects/lifeking/native`, `emit-build-shards --native-source-dir projects/lifeking/native`), rebuild, run, iterate on stops; then WiiWare content loading (CNT/ES), then first image. The WinRT and entry-point edits from the first attempt are not needed on this branch (entry goes through the table); check music_attenuation still builds.
+
 ## SDK names from Dolphin's signature database
 `python tools/match_dsy.py ../dev/ref/dolphin-master/Data/Sys/totaldb.dsy --apply` names SDK functions (address >= 0x800DDCB0, size >= 0x10, plain C names, unique match only) with Dolphin's opcode checksum. First run (2026-11-26): 1,628 matches, 1,102 functions renamed; the DOL still matches. The database entries also carry the library and object (e.g. `os.a OSMessage.o`), useful for future splits.
 
