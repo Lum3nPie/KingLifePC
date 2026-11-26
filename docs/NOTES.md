@@ -50,6 +50,8 @@ Other game input code lives around 0x80041500-0x80045000. So an Xbox/DualSense p
 ## SDK names from Dolphin's signature database
 `python tools/match_dsy.py ../dev/ref/dolphin-master/Data/Sys/totaldb.dsy --apply` names SDK functions (address >= 0x800DDCB0, size >= 0x10, plain C names, unique match only) with Dolphin's opcode checksum. First run (2026-11-26): 1,628 matches, 1,102 functions renamed; the DOL still matches. The database entries also carry the library and object (e.g. `os.a OSMessage.o`), useful for future splits.
 
+`python tools/name_by_anchors.py <WiiCompiled>/projects/mkwii/MAP.txt --apply [--lib GX]` then transfers names from Mario Kart Wii's map: between functions both games already name (longest increasing chain of anchors), it aligns the function sizes (Needleman-Wunsch) and copies names of exact-size pairs. Jump-table labels of the map (`_switch`, `_caseD_`) are skipped. Run globally, then per library (GX, OS, DVD, VI, NAND, EXI, IPC, AI...). 2026-11-26: about 530 more SDK functions named this way; the DOL still matches.
+
 ## Toolchain
 - Linker must stay `GC/1.3.2`: Wii/1.x and GC/3.0 linkers drop the `.ctors`/`.dtors` null terminators and shift every later section.
 - SDK (RVL_SDK) libs were built with `0x4199_60831` = `GC/3.0a5.2` (mwcc 4.1 build 60831).
