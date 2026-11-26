@@ -38,6 +38,13 @@ Other game input code lives around 0x80041500-0x80045000. So an Xbox/DualSense p
 - `projects/lifeking/MAP.txt`: the 10,307 function starts from `docs/index/functions.tsv` (regenerate when the index changes).
 - `Assets/lifeking/main.dol`: local copy of the DOL (gitignored by WiiCompiled).
 - Toolchain needed: .NET 8 SDK, CMake >= 3.25, Ninja (pip ninja ok), LLVM-MinGW clang (MSVC is not supported by the runtime's CMake). On 2026-11-26 only ninja was installed.
+- Local patches to WiiCompiled (keep them when updating the clone):
+  - translator: disassembly budget raised to 65536 instructions / 0x40000 bytes (`FunctionTranslator.cs`, `InferredGuestFunctionAbiProvider.cs`, `Program.cs`), because fn_8004CDB8 is 0x149FC bytes;
+  - manifest: `native_registration_root`/`native_index` point to an empty `projects/lifeking/native`, so the stock runtime/src registrations (Mario Kart Wii addresses) are not applied at translation time; output root is `generated/` (the runtime CMake reads it there);
+  - `runtime/include/system_bridge.h`: `kDefaultEntryAddress` = 0x8000403C (our `__start`);
+  - `runtime/src/music_attenuation.cpp`: WinRT music ducking disabled (`LIFEKING_NO_WINRT`), the Windows SDK 19041 C++/WinRT headers do not build with clang/libc++.
+- Build commands: translator `translate-recursive 0x8000403C --output-metadata generated/base_translation_output.json`, `generate-data-init`, `emit-native-index --out projects/lifeking/native-index.json`, `emit-build-shards --base-metadata generated/base_translation_output.json --base-functions-dir generated/functions --native-index projects/lifeking/native-index.json`; then `cmake -S runtime -B build/lifeking-native -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release` and `ninja -C build/lifeking-native WiiCompiled.exe`.
+- First boot (2026-11-26): translation 10,367 functions, 0 unsupported instructions; WiiCompiled.exe builds (D3D12 via aurora), loads the DOL sections, starts at `__start`, then stops on the first hardware write: 0xCC003004 (PI interrupt mask) from OS init. Also "Executed 0 main DOL static constructors" (ctor table discovery to check).
 - The WiiCompiled runtime is tied to Mario Kart Wii: ~150 hard-coded guest addresses in `runtime/src` (HLE of OS, GX, AX, input, storage). Those hooks must be re-targeted to this game's SDK functions, using the decomp index to find them.
 
 ## Toolchain
