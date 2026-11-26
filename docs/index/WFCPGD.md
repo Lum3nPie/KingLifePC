@@ -6,7 +6,7 @@ Lookups: `grep <name or address> docs/index/functions.tsv`, `docs/index/units.ts
 
 ## Totals
 
-- Symbols: 18051 (10307 functions, 382 with real names)
+- Symbols: 18052 (10307 functions, 1563 with real names)
 - Units: 675 with code (5 hand-split)
 - Code: 2401892 bytes, decompiled and matching: 1108 bytes
 
@@ -39,29 +39,39 @@ Entry point 0x8000403C, BSS 0x802B1200 size 0xEF638.
 
 | Prefix | Count | First | Last |
 |---|---|---|---|
-| `C runtime / MSL (lowercase)` | 91 | 0x80004000 | 0x8012E460 |
+| `C runtime / MSL (lowercase)` | 636 | 0x80004000 | 0x8017354C |
 | `runtime (__*)` | 5 | 0x8009210C | 0x800CFC78 |
 | `C++ (mangled)` | 6 | 0x800CFCC8 | 0x800CFE40 |
 | `PPC` | 23 | 0x800DDCB0 | 0x800DDDC4 |
-| `DB` | 4 | 0x800DDE14 | 0x800DDEAC |
-| `OS` | 99 | 0x800DDEFC | 0x8011F238 |
-| `other` | 64 | 0x800DE314 | 0x8022A770 |
-| `AI` | 1 | 0x800DFE8C | 0x800DFE8C |
-| `DC` | 5 | 0x800E0340 | 0x800E0438 |
+| `DB` | 17 | 0x800DDE14 | 0x80127124 |
+| `OS` | 140 | 0x800DDEFC | 0x8011F238 |
+| `other` | 307 | 0x800DE314 | 0x8022A770 |
+| `AI` | 9 | 0x800DF248 | 0x800FC6B4 |
+| `DC` | 7 | 0x800E0340 | 0x800E0438 |
 | `IC` | 3 | 0x800E0464 | 0x800E04A8 |
-| `LC` | 1 | 0x800E05C0 | 0x800E05C0 |
-| `MEM` | 1 | 0x800E5A30 | 0x800E5A30 |
-| `DVD` | 16 | 0x800ED51C | 0x800F5C70 |
-| `VI` | 2 | 0x800F8364 | 0x800FA418 |
-| `PAD` | 1 | 0x800FC298 | 0x800FC298 |
-| `GX` | 14 | 0x80101A38 | 0x801077FC |
-| `EXI` | 11 | 0x8011D91C | 0x8011ED14 |
-| `SI` | 6 | 0x8011F8C8 | 0x80120AF0 |
-| `ISFS` | 3 | 0x80128528 | 0x80129850 |
+| `LC` | 5 | 0x800E04BC | 0x800E06DC |
+| `MEM` | 5 | 0x800E5A30 | 0x80128088 |
+| `DVD` | 42 | 0x800ED51C | 0x800F5C70 |
+| `VI` | 23 | 0x800F6928 | 0x800FA460 |
+| `PAD` | 9 | 0x800FA9BC | 0x800FC298 |
+| `AXFX` | 2 | 0x800FFCBC | 0x800FFFDC |
+| `DSP` | 7 | 0x80100C74 | 0x80101720 |
+| `GX` | 114 | 0x801017B4 | 0x80109588 |
+| `EXI` | 17 | 0x8011D91C | 0x80126A78 |
+| `SI` | 17 | 0x8011F580 | 0x80120AF0 |
+| `ISFS` | 13 | 0x80128528 | 0x80129BF0 |
 | `IPC` | 8 | 0x80129D04 | 0x8012A200 |
-| `IOS` | 4 | 0x8012A568 | 0x8012B280 |
-| `NAND` | 3 | 0x8012CF24 | 0x8012E368 |
-| `SC` | 4 | 0x8012E8E4 | 0x8013041C |
+| `IOS` | 13 | 0x8012A568 | 0x8012B280 |
+| `NAND` | 8 | 0x8012BFC8 | 0x8012E368 |
+| `SC` | 13 | 0x8012E8E4 | 0x801308E4 |
+| `BT` | 66 | 0x80133DB0 | 0x80145808 |
+| `L2` | 10 | 0x8014C534 | 0x8014D0E0 |
+| `USB` | 2 | 0x8015E154 | 0x8015E1FC |
+| `WPAD` | 9 | 0x801613EC | 0x80164D1C |
+| `WUD` | 10 | 0x8016F388 | 0x80171DC4 |
+| `ARC` | 7 | 0x80175454 | 0x80175D0C |
+| `TPL` | 2 | 0x80175DCC | 0x80175EE0 |
+| `WENC` | 1 | 0x801FD5E0 | 0x801FD5E0 |
 | `ES` | 6 | 0x801FF2E0 | 0x802004D0 |
 | `NWC24` | 1 | 0x8022A000 | 0x8022A000 |
 
