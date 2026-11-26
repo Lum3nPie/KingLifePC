@@ -3,7 +3,9 @@
 ## Project goal (from Liara)
 A bootable game, identical to the original, plus Xbox Series and DualSense controller support.
 - "Identical" is the matching decomp: `ninja` must keep producing the original main.dol (SHA-1 check).
-- Controller support is an addition on top, so it has to live outside the matching build (a separate non-matching build or a PC port layer). Prioritise the input layer (WPAD/KPAD and the game code that reads them) when choosing what to decompile.
+- Target confirmed: a **PC port**. Liara has no Wiimote, so the game must be fully playable with an Xbox Series or DualSense pad.
+- Controller support lives outside the matching build (PC port layer). The input layer (WPAD/KPAD and the game code that reads them) must be replaced by a pad-to-Wiimote mapping (buttons, and a substitute for pointer/IR and motion if the game uses them). Study it once the MSL containers are unblocked.
+- Mapping guideline (Liara): base the Xbox/DualSense layout on the Wii **Classic Controller** layout (see Dolphin's Classic Controller mapping in `dev/ref/dolphin-master`). To check: whether the game already reads the Classic Controller through KPAD/WPAD (extension type checks), which would make the mapping direct.
 
 Hand-written notes. Keep them short and up to date. The generated index is in `docs/index/`.
 
@@ -35,6 +37,7 @@ Hand-written notes. Keep them short and up to date. The generated index is in `d
 - Most of main is an inlined MSL/EWL `std::string` (12 bytes, bit 31 of word 0 = long mode, SSO capacity 11, growth `(len+16)&~15`, errors printed with fprintf(stderr)+abort since exceptions are off). Weak string helpers follow the sinit: fn_8000C958 (default ctor), dtor_8000C978, fn_8000C9D4 (replace), fn_8000CC7C (allocate).
 - Matching it needs a reconstructed MSL `<string>` that inlines the same way. WIP in `include/msl/string` (based on TheLastStoryDecomp's CC0 reconstruction). `do_replace`, `reserve` and the layout look right.
 - Inlining puzzle (not solved): the original inlines the `const char*` ctor and `reserve` into main (reserve's message is in main's string pool), but calls `__zero` (fn_8000C958), the dtor (dtor_8000C978) and `allocator::allocate` (fn_8000CC7C, its message is a weak `@STRING@` object in .data, so it is an in-class inline function). With -O4,s nothing big inlines; with -O4,p in-class members inline (too much) and out-of-class template members do not. main.cpp is configured NonMatching with -O4,p until this is solved.
+- Rules measured with GC/3.0a5.2 (standalone probes): with -O4,s only small straight-line inline functions get inlined (loops and branchy functions are called); with -O4,p everything in-class inlines. A string literal in an in-class (implicitly inline) member goes to a weak `@STRING@<func>` object in .data; in an out-of-class member it goes to the file's `@stringBase0` pool. Out-of-class template members are not inlined under either setting. `-str pool` and the `-inline` variants change nothing here.
 - The class at 0x800CFE4C (vtable 0x80281B38) inlines `std::vector` growth ("vector length error"), same blocker.
 
 ## Game classes found
