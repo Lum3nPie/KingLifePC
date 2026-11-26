@@ -26,7 +26,10 @@ start	end	code	functions	named	matched%	region	name
 800CD364	800CD3DC	120	1	0	0.0	game	auto_fn_800CD364_text
 800CD3DC	800D1700	17188	144	0	0.0	game	auto_03_800CD3DC_text
 800D1700	800D170C	12	1	0	0.0	game	auto_fn_800D1700_text
-800D170C	80109728	229404	1028	186	0.0	game	auto_03_800D170C_text
+800D170C	800DDCB0	50596	209	0	0.0	game	auto_03_800D170C_text
+800DDCB0	800DDE14	356	23	23	100.0	sdk/libs	revolution/os/PPCArch
+800DDE14	8010967C	178280	793	162	0.0	sdk/libs	auto_03_800DDE14_text
+8010967C	80109728	172	3	3	100.0	sdk/libs	Runtime.PPCEABI.H/global_destructor_chain
 80109728	80109768	64	1	0	0.0	sdk/libs	auto_dtor_80109728_text
 80109768	801097A8	64	1	0	0.0	sdk/libs	auto_fn_80109768_text
 801097A8	80109A10	616	6	0	0.0	sdk/libs	auto_03_801097A8_text
@@ -36,7 +39,7 @@ start	end	code	functions	named	matched%	region	name
 80109CC8	80109D40	120	1	0	0.0	sdk/libs	auto_fn_80109CC8_text
 80109D40	80109DC0	128	1	0	0.0	sdk/libs	auto_fn_80109D40_text
 80109DC0	8010A5E0	2080	15	6	0.0	sdk/libs	auto_03_80109DC0_text
-8010A5E0	8010A650	112	2	2	0.0	sdk/libs	__init_cpp_exceptions
+8010A5E0	8010A650	112	2	2	100.0	sdk/libs	Runtime.PPCEABI.H/__init_cpp_exceptions
 8010A650	8010A950	768	5	2	0.0	sdk/libs	auto_03_8010A650_text
 8010A950	8010AB00	432	1	0	0.0	sdk/libs	auto_fn_8010A950_text
 8010AB00	8010ACB0	432	1	0	0.0	sdk/libs	auto_fn_8010AB00_text

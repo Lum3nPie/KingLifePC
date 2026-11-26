@@ -12,3 +12,18 @@ Sections:
 	.sbss       type:bss align:16
 	.sdata2     type:rodata align:32
 	.sbss2      type:bss align:32
+
+revolution/os/PPCArch.c:
+	.text       start:0x800DDCB0 end:0x800DDE14
+	.data       start:0x80281FC0 end:0x80281FF8
+
+Runtime.PPCEABI.H/global_destructor_chain.c:
+	.text       start:0x8010967C end:0x80109728
+	.bss        start:0x802F4C88 end:0x802F4F88
+	.sbss       start:0x8039E218 end:0x8039E220
+
+Runtime.PPCEABI.H/__init_cpp_exceptions.cpp:
+	.text       start:0x8010A5E0 end:0x8010A650
+	.ctors      start:0x80256800 end:0x80256804
+	.dtors      start:0x802568C0 end:0x802568C8
+	.sdata      start:0x8039D3D0 end:0x8039D3D4

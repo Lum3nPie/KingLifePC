@@ -6,9 +6,9 @@ Lookups: `grep <name or address> docs/index/functions.tsv`, `docs/index/units.ts
 
 ## Totals
 
-- Symbols: 18051 (10307 functions, 365 with real names)
-- Units: 671 with code (0 hand-split)
-- Code: 2401892 bytes, decompiled and matching: 0 bytes
+- Symbols: 18051 (10307 functions, 367 with real names)
+- Units: 674 with code (3 hand-split)
+- Code: 2401892 bytes, decompiled and matching: 640 bytes
 
 ## DOL sections
 
@@ -40,7 +40,7 @@ Entry point 0x8000403C, BSS 0x802B1200 size 0xEF638.
 | Prefix | Count | First | Last |
 |---|---|---|---|
 | `C runtime / MSL (lowercase)` | 91 | 0x80004000 | 0x8012E460 |
-| `PPC` | 21 | 0x800DDCB0 | 0x800DDDC4 |
+| `PPC` | 23 | 0x800DDCB0 | 0x800DDDC4 |
 | `DB` | 4 | 0x800DDE14 | 0x800DDEAC |
 | `OS` | 95 | 0x800DDEFC | 0x8011F238 |
 | `other` | 64 | 0x800DE314 | 0x8022A770 |
@@ -155,8 +155,12 @@ In game code, `auto_fn_*` units are `__sinit` functions: each one marks the end 
 | 0x800CD364 | 0x800CD3DC | 120 | 1 | 0% | auto_fn_800CD364_text (sinit) |
 | 0x800CD3DC | 0x800D1700 | 17188 | 144 | 0% | auto_03_800CD3DC_text |
 | 0x800D1700 | 0x800D170C | 12 | 1 | 0% | auto_fn_800D1700_text (sinit) |
-| 0x800D170C | 0x80109728 | 229404 | 1028 | 0% | auto_03_800D170C_text |
+| 0x800D170C | 0x800DDCB0 | 50596 | 209 | 0% | auto_03_800D170C_text |
 
 ## Hand-split units
 
-None yet.
+- revolution/os/PPCArch: 0x800DDCB0-0x800DDE14, 100% matched
+- Runtime.PPCEABI.H/global_destructor_chain: 0x8010967C-0x80109728, 100% matched
+- Runtime.PPCEABI.H/__init_cpp_exceptions: 0x8010A5E0-0x8010A650, 100% matched
+
+See also `docs/NOTES.md` for hand-written notes and gotchas.
