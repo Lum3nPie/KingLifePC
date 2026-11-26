@@ -33,11 +33,11 @@ Other game input code lives around 0x80041500-0x80045000. So an Xbox/DualSense p
 - WiiWare specifics: the game is a NAND title, not a disc. main.dol (content 1) and the data archive (content 2, already extracted in dev/work/LifeKing/00000002) must be fed in by hand; NAND save and content access must be mapped to local files.
 
 ### Port workspace (local only, GPL, never pushed with game files)
-- `C:\Jeux\My Life As A King\port\Wiicompiled`: clone of WiiCompiled (depth 1).
+- `C:/Jeux/My Life As A King/port/Wiicompiled`: clone of WiiCompiled (depth 1).
 - `projects/lifeking/recomp.yml`: manifest for main.dol (entry 0x8000403C, SDA base 0x803A47A0, SDA2 base 0x803A6660, SHA-256 99852f92...b30b), `allow_unsupported_instructions: true` for the first pass.
 - `projects/lifeking/MAP.txt`: the 10,307 function starts from `docs/index/functions.tsv` (regenerate when the index changes).
 - `Assets/lifeking/main.dol`: local copy of the DOL (gitignored by WiiCompiled).
-- Toolchain needed: .NET 8 SDK, CMake >= 3.25, Ninja (pip ninja ok), LLVM-MinGW clang (MSVC is not supported by the runtime's CMake). None of the first three/fourth were installed on 2026-11-26 apart from ninja.
+- Toolchain needed: .NET 8 SDK, CMake >= 3.25, Ninja (pip ninja ok), LLVM-MinGW clang (MSVC is not supported by the runtime's CMake). On 2026-11-26 only ninja was installed.
 - The WiiCompiled runtime is tied to Mario Kart Wii: ~150 hard-coded guest addresses in `runtime/src` (HLE of OS, GX, AX, input, storage). Those hooks must be re-targeted to this game's SDK functions, using the decomp index to find them.
 
 ## Toolchain
