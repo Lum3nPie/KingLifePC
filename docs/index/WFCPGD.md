@@ -6,9 +6,9 @@ Lookups: `grep <name or address> docs/index/functions.tsv`, `docs/index/units.ts
 
 ## Totals
 
-- Symbols: 18051 (10307 functions, 367 with real names)
-- Units: 674 with code (3 hand-split)
-- Code: 2401892 bytes, decompiled and matching: 640 bytes
+- Symbols: 18051 (10307 functions, 382 with real names)
+- Units: 676 with code (4 hand-split)
+- Code: 2401892 bytes, decompiled and matching: 1108 bytes
 
 ## DOL sections
 
@@ -40,9 +40,11 @@ Entry point 0x8000403C, BSS 0x802B1200 size 0xEF638.
 | Prefix | Count | First | Last |
 |---|---|---|---|
 | `C runtime / MSL (lowercase)` | 91 | 0x80004000 | 0x8012E460 |
+| `runtime (__*)` | 5 | 0x8009210C | 0x800CFC78 |
+| `C++ (mangled)` | 6 | 0x800CFCC8 | 0x800CFE40 |
 | `PPC` | 23 | 0x800DDCB0 | 0x800DDDC4 |
 | `DB` | 4 | 0x800DDE14 | 0x800DDEAC |
-| `OS` | 95 | 0x800DDEFC | 0x8011F238 |
+| `OS` | 99 | 0x800DDEFC | 0x8011F238 |
 | `other` | 64 | 0x800DE314 | 0x8022A770 |
 | `AI` | 1 | 0x800DFE8C | 0x800DFE8C |
 | `DC` | 5 | 0x800E0340 | 0x800E0438 |
@@ -153,12 +155,15 @@ In game code, `auto_fn_*` units are `__sinit` functions: each one marks the end 
 | 0x800CA5B8 | 0x800CA5D8 | 32 | 1 | 0% | auto_fn_800CA5B8_text (sinit) |
 | 0x800CA5D8 | 0x800CD364 | 11660 | 99 | 0% | auto_03_800CA5D8_text |
 | 0x800CD364 | 0x800CD3DC | 120 | 1 | 0% | auto_fn_800CD364_text (sinit) |
-| 0x800CD3DC | 0x800D1700 | 17188 | 144 | 0% | auto_03_800CD3DC_text |
+| 0x800CD3DC | 0x800CFC78 | 10396 | 105 | 0% | auto_03_800CD3DC_text |
+| 0x800CFC78 | 0x800CFE4C | 468 | 7 | 100% | game/WCThread |
+| 0x800CFE4C | 0x800D1700 | 6324 | 32 | 0% | auto_03_800CFE4C_text |
 | 0x800D1700 | 0x800D170C | 12 | 1 | 0% | auto_fn_800D1700_text (sinit) |
 | 0x800D170C | 0x800DDCB0 | 50596 | 209 | 0% | auto_03_800D170C_text |
 
 ## Hand-split units
 
+- game/WCThread: 0x800CFC78-0x800CFE4C, 100% matched
 - revolution/os/PPCArch: 0x800DDCB0-0x800DDE14, 100% matched
 - Runtime.PPCEABI.H/global_destructor_chain: 0x8010967C-0x80109728, 100% matched
 - Runtime.PPCEABI.H/__init_cpp_exceptions: 0x8010A5E0-0x8010A650, 100% matched

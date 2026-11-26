@@ -273,6 +273,25 @@ def RevolutionLib(lib_name: str, objects: List[Object]) -> Dict[str, Any]:
     }
 
 
+# Game code flags: same compiler as the SDK, optimized for size (-O4,s).
+cflags_game = [
+    *cflags_base,
+    "-O4,s",
+    "-use_lmw_stmw on",
+    "-str reuse,readonly",
+]
+
+
+def GameLib(lib_name: str, objects: List[Object]) -> Dict[str, Any]:
+    return {
+        "lib": lib_name,
+        "mw_version": "GC/3.0a5.2",
+        "cflags": cflags_game,
+        "progress_category": "game",
+        "objects": objects,
+    }
+
+
 # Helper function for REL script objects
 def Rel(lib_name: str, objects: List[Object]) -> Dict[str, Any]:
     return {
@@ -311,6 +330,12 @@ config.libs = [
         "os",
         [
             Object(Matching, "revolution/os/PPCArch.c"),
+        ],
+    ),
+    GameLib(
+        "game",
+        [
+            Object(Matching, "game/WCThread.cpp"),
         ],
     ),
 ]
