@@ -1,0 +1,11 @@
+# My Life as a King (WiiWare, PAL, title 00010001-57464350 "WFCP", rev 1)
+# See config.example.yml for documentation.
+object_base: orig/WFCPGD
+# main.dol is NAND content 00000001.app of the WiiWare title (boot content 9 is the NAND loader).
+object: sys/main.dol
+hash: ab2944ddbae018d562839a4a48b222ada1d3c915
+symbols: config/WFCPGD/symbols.txt
+splits: config/WFCPGD/splits.txt
+# Wii-era CodeWarrior (strings in the DOL date the build to March 2008).
+# See config.example.yml for a list.
+mw_comment_version: 14
