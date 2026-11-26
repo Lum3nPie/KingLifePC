@@ -15,6 +15,23 @@ Hand-written notes. Keep them short and up to date. The generated index is in `d
 - DLC (00010005-57464350, v2) is data only, no code.
 - Original files are gitignored (`orig/*/*`). Never commit them.
 
+## PC port strategy (decided 2026-11-26)
+Liara chose **static recompilation** (PowerPC translated to C/C++, system layer rewritten by hand) over a full matching decomp first. The matching decomp continues in parallel where understanding the code helps (input, menus).
+
+### Classic Controller support (checked)
+The game reads the Classic Controller through KPAD. Input function at 0x800D1EB4 calls KPADRead (fn_801746A8, buffer of 0x84-byte KPADStatus) per channel after WPADProbe (fn_801626A4), then:
+- reads `ex_status.cl.hold` (+0x60) masked with 0xC003 = Classic d-pad (UP 0x1, LEFT 0x2, DOWN 0x4000, RIGHT 0x8000) to move a cursor, diagonals included;
+- reads `ex_status.cl.lstick` (+0x6C/+0x70) as an analog stick.
+Other game input code lives around 0x80041500-0x80045000. So an Xbox/DualSense pad can be presented to the game as a Classic Controller (Dolphin's layout as reference). Still to check: whether some screens need the Wii Remote pointer (IR) or motion.
+
+### Existing tools (Nov 2026, all GPL-3.0)
+- **WiiCompiled** (github.com/patchzyy/Wiicompiled): Wii static recompiler + runtime, rendering through aurora (GX compatibility layer), SDL pads with per-button mapping and Classic Controller support. Base of several Wii ports (NSMB Wii, Wario Land Shake It, PokePark, Mario Kart Wii). Most proven option.
+- **DolRecomp** (github.com/ExpansionPak/DolRecomp): GameCube/Wii recompiler (Eternal Darkness, MoH Frontline ports). `mstan/powerpc-recomp-core` is a reusable extraction of its compiler core.
+- **wii-recomp** (github.com/Zontex/wii-recomp): recompiles games and the Wii Menu into a whole emulated-console runtime; heavier than needed.
+- Example full ports to learn from: arelkair/wiiparty-recomp (D3D11, gamepads), WitherBlitz/NSMB-Wii-Recompilation.
+- Licensing: these are GPL-3.0. A port built on them must be GPL-3.0; keep it separate from the decomp sources (own repo or folder) so the decomp keeps its license.
+- WiiWare specifics: the game is a NAND title, not a disc. main.dol (content 1) and the data archive (content 2, already extracted in dev/work/LifeKing/00000002) must be fed in by hand; NAND save and content access must be mapped to local files.
+
 ## Toolchain
 - Linker must stay `GC/1.3.2`: Wii/1.x and GC/3.0 linkers drop the `.ctors`/`.dtors` null terminators and shift every later section.
 - SDK (RVL_SDK) libs were built with `0x4199_60831` = `GC/3.0a5.2` (mwcc 4.1 build 60831).
