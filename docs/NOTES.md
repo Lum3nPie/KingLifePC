@@ -55,6 +55,9 @@ Other game input code lives around 0x80041500-0x80045000. So an Xbox/DualSense p
 - Result: boots through OSInit, WPAD/Bluetooth, loads Squirrel scripts, sounds, menus and models, runs the loading-screen thread and presents ~25 frames/s with no crash. Window content still to confirm (PrintWindow shows black; may be capture of D3D12 flip model).
 - Facts learned: the game uses DVD calls (WiiWare DVD-on-NAND), polls `WPADGetStatus` in a busy loop at 0x80041A44, uses GXSetDrawDone/GXWaitDrawDone (MKW does not), tries `<file>.press` before each file, loads `/menu/menuSystem_eu.arc` etc.
 
+### Controls (2026-11-26)
+The runtime (HM patch) emulates a Wii Remote fed by every connected pad (through the F10 GameCube bindings), the keyboard and the mouse (pointer, left click A, right click B). For WFCPGD the remote carries a **Classic Controller** instead of the Nunchuk (`emulated_remote*.cpp`, `patch_classic.py`): GameCube view of the Xbox/DualSense pad -> Classic by position: A/B/X/Y, D-pad, left stick, right stick (C-stick), analog L/R, Z = ZR, Start = +, Z+Start = Home, Z+Y = -, Z+X = ZL. The core remote buttons are still reported too (A, B, 1, 2, +, -, D-pad).
+
 ### Graphics backend (question from Liara)
 Rendering goes through aurora on Dawn (WebGPU), which already targets Direct3D 12, Vulkan and Metal: nothing is tied to D3D12. `graphics_api` in Config.toml (`auto`, `vulkan`, `d3d12`) picks it, and the F10 menu can change it for the next launch; `auto` chose D3D12 on Windows here.
 
