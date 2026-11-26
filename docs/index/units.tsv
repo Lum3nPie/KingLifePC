@@ -29,7 +29,7 @@ start	end	code	functions	named	matched%	region	name
 800D1700	800D170C	12	1	0	0.0	game	auto_fn_800D1700_text
 800D170C	800DDCB0	50596	209	0	0.0	game	auto_03_800D170C_text
 800DDCB0	800DDE14	356	23	23	100.0	sdk/libs	revolution/os/PPCArch
-800DDE14	8010967C	178280	793	626	0.0	sdk/libs	auto_03_800DDE14_text
+800DDE14	8010967C	178280	793	632	0.0	sdk/libs	auto_03_800DDE14_text
 8010967C	80109728	172	3	3	100.0	sdk/libs	Runtime.PPCEABI.H/global_destructor_chain
 80109728	80109768	64	1	0	0.0	sdk/libs	auto_dtor_80109728_text
 80109768	801097A8	64	1	0	0.0	sdk/libs	auto_fn_80109768_text

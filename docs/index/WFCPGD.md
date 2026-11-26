@@ -6,7 +6,7 @@ Lookups: `grep <name or address> docs/index/functions.tsv`, `docs/index/units.ts
 
 ## Totals
 
-- Symbols: 18052 (10307 functions, 1844 with real names)
+- Symbols: 18052 (10307 functions, 1850 with real names)
 - Units: 675 with code (5 hand-split)
 - Code: 2401892 bytes, decompiled and matching: 1108 bytes
 
@@ -46,7 +46,7 @@ Entry point 0x8000403C, BSS 0x802B1200 size 0xEF638.
 | `DB` | 19 | 0x800DDE14 | 0x80127124 |
 | `OS` | 185 | 0x800DDEFC | 0x8011F238 |
 | `other` | 361 | 0x800DE314 | 0x8022A770 |
-| `AI` | 9 | 0x800DF248 | 0x800FC6B4 |
+| `AI` | 14 | 0x800DF248 | 0x800FC6B4 |
 | `DC` | 7 | 0x800E0340 | 0x800E0438 |
 | `IC` | 3 | 0x800E0464 | 0x800E04A8 |
 | `LC` | 8 | 0x800E04BC | 0x800E06DC |
@@ -56,7 +56,7 @@ Entry point 0x8000403C, BSS 0x802B1200 size 0xEF638.
 | `PAD` | 11 | 0x800FA9BC | 0x800FC298 |
 | `AX` | 4 | 0x800FE448 | 0x800FE4BC |
 | `AXFX` | 5 | 0x800FFCBC | 0x80100030 |
-| `DSP` | 13 | 0x80100C54 | 0x80101720 |
+| `DSP` | 14 | 0x80100C54 | 0x80101720 |
 | `GX` | 173 | 0x801017B4 | 0x80109588 |
 | `EXI` | 17 | 0x8011D91C | 0x80126A78 |
 | `SI` | 17 | 0x8011F580 | 0x80120AF0 |
