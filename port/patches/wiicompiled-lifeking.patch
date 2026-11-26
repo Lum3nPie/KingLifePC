@@ -1861,6 +1861,21 @@ index 0000000..7309500
 +const bool kRegistered = (VI_HLE_SetCoveredScreenProbe(&AnimalParadeScreenCovered), true);
 +
 +} // namespace
+diff --git a/runtime/src/hle/audio/audio.cpp b/runtime/src/hle/audio/audio.cpp
+index f2166d4..3b1fd7d 100644
+--- a/runtime/src/hle/audio/audio.cpp
++++ b/runtime/src/hle/audio/audio.cpp
+@@ -28,7 +28,9 @@ const uint32_t kAIDmaCallbackAddr = MKW_GADDR(80386480);
+ 
+ // Max completed 3 ms DMA blocks delivered per tick. Draining several at once catches up
+ // backlog from a long frame without letting a large stall spiral into an unbounded loop.
+-constexpr int kMaxBlocksPerTick = 4;
++// LifeKing: 16 (was 4) so a long guest frame (Chime, buildings) can catch the audio up at the
++// next service point instead of falling behind and slowing the music down.
++constexpr int kMaxBlocksPerTick = 16;
+ // Backlog (in blocks) tolerated before a catch-up block waits on an in-flight mix.
+ constexpr double kMaxDeferredBlocks = 2.0;
+ 
 diff --git a/runtime/src/hle/audio/ax_effects.cpp b/runtime/src/hle/audio/ax_effects.cpp
 index ade28b5..70c80e7 100644
 --- a/runtime/src/hle/audio/ax_effects.cpp
@@ -8304,10 +8319,10 @@ index 0000000..3840c1e
 +} // namespace TouchControls
 diff --git a/runtime/src/hle/lifeking_natives.cpp b/runtime/src/hle/lifeking_natives.cpp
 new file mode 100644
-index 0000000..1c37ec3
+index 0000000..ca552ac
 --- /dev/null
 +++ b/runtime/src/hle/lifeking_natives.cpp
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,38 @@
 +// Natives for My Life as a King (WiiWare PAL, WFCPGD): functions of its own SDK build that need a
 +// host-side answer. Registered only while WFCPGD runs (FOREIGN_GAME_NATIVE, see hle_stubs.h).
 +
@@ -8346,62 +8361,6 @@ index 0000000..1c37ec3
 +FOREIGN_GAME_NATIVE(WFCPGD, 8010470C, LifeKing_GXSetDrawDone_HLE, void, (), ());
 +FOREIGN_GAME_NATIVE(WFCPGD, 801047A4, LifeKing_GXWaitDrawDone_HLE, void, (), ());
 +
-+// --- Debug: log what the game's resource loader is asked for (0x800439C0, r4 = std::string*). ---
-+#include "guest_abi/cpu_context.h"
-+#include "guest_function_imports.h"
-+#include <cstdio>
-+#include <string>
-+
-+namespace {
-+std::string GuestStdString(uint32_t str) {
-+    if (str == 0) return "(null)";
-+    const uint32_t w0 = Memory::Read32(str);
-+    uint32_t data = 0, size = 0;
-+    if (w0 & 0x80000000u) {
-+        size = Memory::Read32(str + 4u);
-+        data = Memory::Read32(str + 8u);
-+    } else {
-+        size = Memory::Read8(str) & 0x7Fu;
-+        data = str + 1u;
-+    }
-+    if (size > 512) size = 512;
-+    std::string out;
-+    for (uint32_t i = 0; i < size; ++i) out.push_back(static_cast<char>(Memory::Read8(data + i)));
-+    return out;
-+}
-+} // namespace
-+
-+extern "C" void LifeKing_ResourceLoad(CpuContext* ctx) {
-+    std::fprintf(stderr, "[lifeking] resource load '%s' flag=%u\n", GuestStdString(ctx->gpr[4]).c_str(), ctx->gpr[5]);
-+    GuestFunctions::BaseTranslation(0x800439C0u)(ctx);
-+    std::fprintf(stderr, "[lifeking]   -> 0x%08X\n", ctx->gpr[3]);
-+}
-+FOREIGN_GAME_WRAPPER(WFCPGD, 800439C0, LifeKing_ResourceLoad);
-+
-+// --- Debug: trace the loading-screen thread (0x800D0FA8) steps, first calls only. ---
-+#define LIFEKING_TRACE(addr_hex, label)                                                          \
-+    extern "C" void LifeKing_Trace_##addr_hex(CpuContext* ctx) {                                 \
-+        static int count = 0;                                                                    \
-+        const bool log = count++ < 6;                                                            \
-+        if (log) std::fprintf(stderr, "[lifeking] > %s r3=0x%08X\n", label, ctx->gpr[3]);        \
-+        GuestFunctions::BaseTranslation(0x##addr_hex##u)(ctx);                                   \
-+        if (log) std::fprintf(stderr, "[lifeking] < %s r3=0x%08X\n", label, ctx->gpr[3]);        \
-+    }                                                                                            \
-+    FOREIGN_GAME_WRAPPER(WFCPGD, addr_hex, LifeKing_Trace_##addr_hex);
-+
-+LIFEKING_TRACE(8009D0D0, "loader:ready?")
-+LIFEKING_TRACE(800D10AC, "loader:setup1")
-+LIFEKING_TRACE(800D1128, "loader:setup2")
-+LIFEKING_TRACE(80033260, "frame:begin")
-+LIFEKING_TRACE(800D125C, "loader:draw")
-+LIFEKING_TRACE(80032DE8, "frame:end")
-+LIFEKING_TRACE(800332C4, "frame:present")
-+LIFEKING_TRACE(800D0520, "content:mount")
-+LIFEKING_TRACE(800D0598, "content:load")
-+LIFEKING_TRACE(801FEFE8, "cnt:initHandleTitleNAND")
-+LIFEKING_TRACE(801FF060, "cnt:fastOpen")
-+LIFEKING_TRACE(800C3DAC, "text:setFontSize")
-+LIFEKING_TRACE(800955CC, "menu:fontInit")
 diff --git a/runtime/src/hle/os/os_thread.cpp b/runtime/src/hle/os/os_thread.cpp
 index d2423e6..e764565 100644
 --- a/runtime/src/hle/os/os_thread.cpp
@@ -8455,7 +8414,7 @@ index 22e45dc..81b6c64 100644
  
  extern "C" uint32_t SCGetProductArea_HLE()
 diff --git a/runtime/src/hle/storage/dvd.cpp b/runtime/src/hle/storage/dvd.cpp
-index b76e5e1..4a0062f 100644
+index b76e5e1..9d9015b 100644
 --- a/runtime/src/hle/storage/dvd.cpp
 +++ b/runtime/src/hle/storage/dvd.cpp
 @@ -643,7 +643,9 @@ static void BuildAndPublishRuntimeFst() {
@@ -8504,14 +8463,6 @@ index b76e5e1..4a0062f 100644
          return DvdReadFatal(fileInfoPtr, "<unresolved DVD file handle>", offset,
                              length > 0 ? static_cast<uint32_t>(length) : 0,
                              "DVD file info does not reference a published FST extent");
-@@ -925,6 +936,7 @@ extern "C" int32_t DVDReadPrio_8015E834(uint32_t fileInfoPtr, uint32_t bufferPtr
-     }
- 
-     CopyToGuestAsDma(bufferPtr, tempBuf.data(), uLength);
-+    std::fprintf(stderr, "[dvd] read %s off=0x%X len=0x%X\n", HostPathText(entry.hostPath).c_str(), uOffset, uLength);
- 
-     Memory::Write32(fileInfoPtr + DVD_CB_OFFSET_TRANSFERRED, uLength);
-     Memory::Write32(fileInfoPtr + DVD_CB_OFFSET_STATE, DVD_STATE_END);
 diff --git a/runtime/src/hle/storage/nand_fs.cpp b/runtime/src/hle/storage/nand_fs.cpp
 index 28c0cbd..6613e53 100644
 --- a/runtime/src/hle/storage/nand_fs.cpp
