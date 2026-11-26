@@ -46,6 +46,14 @@ def read_reference(path):
     return out
 
 
+def library(name):
+    m = re.match(r"^_*([A-Z]{2,}[a-z]?)(?=[A-Z_]|$)", name or "")
+    if not m:
+        return None
+    lib = m.group(1)
+    return lib[:-1] if lib[-1].islower() else lib
+
+
 def align(mine, theirs, tolerance):
     """Needleman-Wunsch on function sizes: pairs whose sizes are equal (or within tolerance)."""
     n, m = len(mine), len(theirs)
@@ -144,7 +152,13 @@ def main():
         theirs = ref[j0 + 1 : j1]
         if not mine or not theirs or len(mine) * len(theirs) > 250000:
             continue
+        lib0 = library(ours[k0][2])
+        lib1 = library(ours[k1][2])
         for m, t in align(mine, theirs, args.tolerance):
+            # Only names of the library the surrounding anchors belong to: an exact-size pair across
+            # unrelated libraries is a coincidence (it once put SC names on AX callbacks).
+            if not t[2] or library(t[2]) not in (lib0, lib1) or not library(t[2]):
+                continue
             if t[2] and re.match(r"^fn_[0-9A-F]{8}$", m[2]) and t[2] not in used:
                 renames.append((m, t[2]))
                 used.add(t[2])
