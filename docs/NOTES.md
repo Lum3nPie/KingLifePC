@@ -52,6 +52,9 @@ Other game input code lives around 0x80041500-0x80045000. So an Xbox/DualSense p
 - `port/lk-tools/make_layer.py` (our own tool) writes the layer: 321 of 787 natives placed by name, startup table in `port/lk-tools/tables/startup.txt`.
 - Left to do: the SDK variable tables (OS, GX, VI, audio, storage, SC: ~110 rows, see `port/ref-hmap/wiicompiled/RBIEE9-*-addresses.txt` for the list of what is needed and how they found each), then retranslate (`native_registration_root: projects/lifeking/native`, `emit-build-shards --native-source-dir projects/lifeking/native`), rebuild, run, iterate on stops; then WiiWare content loading (CNT/ES), then first image. The WinRT and entry-point edits from the first attempt are not needed on this branch (entry goes through the table); check music_attenuation still builds.
 
+### Graphics backend (question from Liara)
+Rendering goes through aurora on Dawn (WebGPU), which already targets Direct3D 12, Vulkan and Metal: nothing is tied to D3D12. `graphics_api` in Config.toml (`auto`, `vulkan`, `d3d12`) picks it, and the F10 menu can change it for the next launch; `auto` chose D3D12 on Windows here.
+
 ## SDK names from Dolphin's signature database
 `python tools/match_dsy.py ../dev/ref/dolphin-master/Data/Sys/totaldb.dsy --apply` names SDK functions (address >= 0x800DDCB0, size >= 0x10, plain C names, unique match only) with Dolphin's opcode checksum. First run (2026-11-26): 1,628 matches, 1,102 functions renamed; the DOL still matches. The database entries also carry the library and object (e.g. `os.a OSMessage.o`), useful for future splits.
 
