@@ -8433,10 +8433,10 @@ index 0000000..3840c1e
 +} // namespace TouchControls
 diff --git a/runtime/src/hle/lifeking_natives.cpp b/runtime/src/hle/lifeking_natives.cpp
 new file mode 100644
-index 0000000..d204e77
+index 0000000..2dd7bca
 --- /dev/null
 +++ b/runtime/src/hle/lifeking_natives.cpp
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,306 @@
 +// Natives for My Life as a King (WiiWare PAL, WFCPGD): functions of its own SDK build that need a
 +// host-side answer. Registered only while WFCPGD runs (FOREIGN_GAME_NATIVE, see hle_stubs.h).
 +
@@ -8603,20 +8603,28 @@ index 0000000..d204e77
 +    g_animFrames = 0;
 +}
 +
-+// 60 Hz: model animations step once per frame by FrameCtrl rate * smBaseUpdateRate. Most run at a
-+// rate the game sets once (a motion starts at 1.0), and those get half the step. The locomotion code,
-+// though, sets the rate every frame from the actor's speed, which the 60 Hz scripts already halve:
-+// halving those again made walking (king, Chime) run at a quarter. So an object whose rate was set
-+// on each of the last few frames keeps the full step.
++// 60 Hz: model animations step once per frame by FrameCtrl rate * smBaseUpdateRate. Most play at a
++// constant rate (a motion at 1.0), and those get half the step. The locomotion code, though, sets
++// the rate from the actor's speed, which the 60 Hz scripts already halve: halving those again made
++// walking run at a quarter. The game sets every rate each frame through the blend object
++// (AnmObjChrBlend::SetUpdateRate 0x801B4224, which forwards to each child at 0x801B4278), so the
++// call site of the game is what tells them apart: a site that has passed several different rates is
++// speed-driven, and the objects it last set keep the full step.
 +constexpr uint32_t kG3dBaseUpdateRate = 0x8039D818u;  // nw4r::g3d::FrameCtrl::smBaseUpdateRate
-+constexpr uint32_t kSpeedDrivenStreak = 3;
-+struct RateSetInfo {
-+    uint32_t lastFrame = 0;
-+    uint32_t streak = 0;
++constexpr uint32_t kBlendForwardLr = 0x801B4278u;
++struct SiteInfo {
++    float firstRate = 0.0f;
++    uint32_t distinct = 0;  // rates seen that differ from the first (capped)
 +};
-+std::map<uint32_t, RateSetInfo> g_rateSets;
++std::map<uint32_t, SiteInfo> g_rateSites;      // game call site (LR) -> what it passes
++struct ObjectRate {
++    uint32_t site = 0;
++    float rate = 1.0f;
++};
++std::map<uint32_t, ObjectRate> g_objectSite;   // animation object -> site and rate it was set last
++uint32_t g_blendCaller = 0;                    // site of the blend SetUpdateRate in progress
 +uint32_t g_gameFrame = 0;
-+std::map<uint64_t, uint32_t> g_rateSetters;  // (LR << 16 | rate * 100) -> calls, for the trace
++std::map<uint64_t, uint32_t> g_rateSetters;    // (LR << 16 | rate * 100) -> calls, for the trace
 +
 +void SetBaseUpdateRate(float value) {
 +    uint32_t bits;
@@ -8624,28 +8632,45 @@ index 0000000..d204e77
 +    Memory::Write32(kG3dBaseUpdateRate, bits);
 +}
 +
++void NoteRateSet(uint32_t site, uint32_t obj, float rate) {
++    SiteInfo& info = g_rateSites[site];
++    if (info.distinct == 0 && info.firstRate == 0.0f) {
++        info.firstRate = rate;
++        info.distinct = 1;
++    } else if (rate != info.firstRate && info.distinct < 100) {
++        ++info.distinct;
++    }
++    g_objectSite[obj] = ObjectRate{site, rate};
++    if (LifeKingAnimTrace()) {
++        const int r = static_cast<int>(rate * 100.0f + 0.5f);
++        ++g_rateSetters[(static_cast<uint64_t>(site) << 16) | (static_cast<uint32_t>(r) & 0xFFFF)];
++    }
++}
++
 +template <uint32_t Address>
 +void LifeKing_AnimSetRate(CpuContext* ctx) {
 +    if (LifeKing60Hz()) {
-+        RateSetInfo& info = g_rateSets[ctx->gpr[3]];
-+        if (info.lastFrame + 1 >= g_gameFrame && info.lastFrame != g_gameFrame) {
-+            ++info.streak;
-+        } else if (info.lastFrame != g_gameFrame) {
-+            info.streak = 1;
-+        }
-+        info.lastFrame = g_gameFrame;
-+        if (LifeKingAnimTrace()) {
-+            const int rate = static_cast<int>(ctx->fpr[1].d * 100.0 + 0.5);
-+            ++g_rateSetters[(static_cast<uint64_t>(ctx->lr) << 16) | (static_cast<uint32_t>(rate) & 0xFFFF)];
-+        }
++        const uint32_t site = ctx->lr == kBlendForwardLr && g_blendCaller != 0 ? g_blendCaller : ctx->lr;
++        NoteRateSet(site, ctx->gpr[3], static_cast<float>(ctx->fpr[1].d));
 +    }
 +    GuestFunctions::BaseTranslation(Address)(ctx);
 +}
 +
++extern "C" void LifeKing_AnimBlendSetRate(CpuContext* ctx) {
++    const uint32_t outer = g_blendCaller;
++    if (g_blendCaller == 0) g_blendCaller = ctx->lr;  // nested blends keep the game's site
++    if (LifeKing60Hz()) NoteRateSet(g_blendCaller, ctx->gpr[3], static_cast<float>(ctx->fpr[1].d));
++    GuestFunctions::BaseTranslation(0x801B4224u)(ctx);
++    g_blendCaller = outer;
++}
++
 +bool SpeedDriven(uint32_t obj) {
-+    const auto it = g_rateSets.find(obj);
-+    return it != g_rateSets.end() && it->second.streak >= kSpeedDrivenStreak &&
-+           it->second.lastFrame + 1 >= g_gameFrame;
++    const auto it = g_objectSite.find(obj);
++    if (it == g_objectSite.end()) return false;
++    // A speed-driven site also plays plain motions at exactly 1.0 (standing): those are halved.
++    if (it->second.rate == 1.0f) return false;
++    const auto site = g_rateSites.find(it->second.site);
++    return site != g_rateSites.end() && site->second.distinct >= 4;
 +}
 +
 +template <int K>
@@ -8669,11 +8694,7 @@ index 0000000..d204e77
 +
 +extern "C" void LifeKing_AnimTraceFrame() {
 +    ++g_gameFrame;
-+    if (g_rateSets.size() > 4096) {
-+        for (auto it = g_rateSets.begin(); it != g_rateSets.end();) {
-+            it = it->second.lastFrame + 600 < g_gameFrame ? g_rateSets.erase(it) : std::next(it);
-+        }
-+    }
++    if (g_objectSite.size() > 8192) g_objectSite.clear();  // freed objects; live ones are set again next frame
 +    if (!LifeKingAnimTrace()) return;
 +    if (g_animFrames + 1 >= 300 && !g_rateSetters.empty()) {
 +        std::multimap<uint32_t, uint64_t, std::greater<>> byCount;
@@ -8706,6 +8727,7 @@ index 0000000..d204e77
 +FOREIGN_GAME_WRAPPER(WFCPGD, 801B5200, LifeKing_AnimSetRate4);
 +FOREIGN_GAME_WRAPPER(WFCPGD, 801B6028, LifeKing_AnimSetRate5);
 +FOREIGN_GAME_WRAPPER(WFCPGD, 801B6F50, LifeKing_AnimSetRate6);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B4224, LifeKing_AnimBlendSetRate);
 +
 +extern "C" void LifeKing_AnimUpdate0(CpuContext* ctx) { LifeKing_AnimUpdate<0>(ctx); }
 +extern "C" void LifeKing_AnimUpdate1(CpuContext* ctx) { LifeKing_AnimUpdate<1>(ctx); }

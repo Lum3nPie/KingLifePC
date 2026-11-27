@@ -30,6 +30,17 @@ RULES = [
      rf"return ::worldEngine.\1(\2){FRAMES};", "actor speed, engine -> script"),
     ("ProgramArchlordComp_*.nut", r"::worldEngine\.setSpeed\(([^,()]+), ([^;]+)\);",
      rf"::worldEngine.setSpeed(\1, (\2){SPEED});", "path-following object speed"),
+    # CUpdateModels takes the microseconds since the last update; during camera events the scripts
+    # pass one 30 (or 25) FPS frame instead, which at 60 FPS ran cutscenes twice as fast.
+    ("ProgramArchlordComp_*.nut", r"diff = 100000/(3\.0|2\.5);",
+     r"diff = 1000000.0/::CGetFPS();", "camera-event model clock (one frame)"),
+    # Camera moved by the pad (height, swing) and rolled by events, all by an amount per frame.
+    ("ProgramArchlordComp_*.nut", r"(function changeHeight\(change\)\r?\n\t\{)",
+     rf"\1 change = change{SPEED};", "camera height step"),
+    ("ProgramArchlordComp_*.nut", r"return ::worldEngine\.changeCameraSwingAngle\(_id, yAngle\);",
+     rf"return ::worldEngine.changeCameraSwingAngle(_id, (yAngle){SPEED});", "camera swing step"),
+    ("ProgramArchlordComp_*.nut", r"_twistAdd = twistByFrame;",
+     rf"_twistAdd = twistByFrame{SPEED};", "camera roll step"),
 ]
 
 
