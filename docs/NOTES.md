@@ -90,6 +90,14 @@ Symptom: frame drops when Chime appears and while a building goes up; the game i
 ### Graphics backend (question from Liara)
 Rendering goes through aurora on Dawn (WebGPU), which already targets Direct3D 12, Vulkan and Metal: nothing is tied to D3D12. `graphics_api` in Config.toml (`auto`, `vulkan`, `d3d12`) picks it, and the F10 menu can change it for the next launch; `auto` chose D3D12 on Windows here.
 
+### Field of view (27/11, validated by Liara at 150%)
+F10 > Graphics "Field of view", 75-150% in steps of 5, saved as `[video] field_of_view`. What it does:
+- Picture: `ApplyFieldOfView` (gx_transform.cpp) divides the x and y scales and skews of a world perspective (0 < m[0] <= 6) in the copy that GX__SetProjection/GX__SetProjectionv send to the GPU. What GXGetProjectionv returns stays the game's own, so nothing is scaled twice.
+- C_MTXPerspective (0x800ECE28) is not the world camera's path. The world camera is set by scripts through GameCamera::SetFrustum 0x800406F4 (t, b, l, r, n, f; it also keeps a copy at camera +0x80..+0x94), which feeds nw4r::g3d::Camera (CameraData +0xBC..+0xC8, flag 0x10, C_MTXFrustum 0x800ECD8C).
+- Culling, nw4r: wrapper `LifeKing_CullFrustum` on 0x801DC18C nw4r::math::FRUSTUM::Set (f1-f6 = t, b, l, r, n, f). It scales t, b, l, r for world cameras. ScnRoot::UpdateFrustum 0x801C69FC rebuilds it every call, for both camera kinds (the fovy variant 0x801DC0D8 ends there too).
+- Culling, game: wrapper `LifeKing_CullObjects` on 0x800369D8, the game's own object wedge (left and right planes 0x80040840/0x800408EC from camera +0x88/+0x8C/+0x90, camera = r3 + [r3+0x5004]*0x22C + 0xA84). It scales the camera copy +0x80..+0x8C for the length of the call and restores it after. This fixed buildings vanishing at the sides in cutscenes.
+- Near plane: when widening, world cameras with n < 1 get n/4 in the GPU copy (m[10] = -n/(f-n), m[11] = -f*n/(f-n)). This fixed the ground cut off at the bottom of the low-angle cutscene. The square shadow camera (n 20, f 80) keeps its own.
+
 ## SDK names from Dolphin's signature database
 `python tools/match_dsy.py ../dev/ref/dolphin-master/Data/Sys/totaldb.dsy --apply` names SDK functions (address >= 0x800DDCB0, size >= 0x10, plain C names, unique match only) with Dolphin's opcode checksum. First run (2026-11-26): 1,628 matches, 1,102 functions renamed; the DOL still matches. The database entries also carry the library and object (e.g. `os.a OSMessage.o`), useful for future splits.
 
