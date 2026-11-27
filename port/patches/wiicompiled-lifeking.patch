@@ -8433,10 +8433,10 @@ index 0000000..3840c1e
 +} // namespace TouchControls
 diff --git a/runtime/src/hle/lifeking_natives.cpp b/runtime/src/hle/lifeking_natives.cpp
 new file mode 100644
-index 0000000..14db207
+index 0000000..e732c2f
 --- /dev/null
 +++ b/runtime/src/hle/lifeking_natives.cpp
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,101 @@
 +// Natives for My Life as a King (WiiWare PAL, WFCPGD): functions of its own SDK build that need a
 +// host-side answer. Registered only while WFCPGD runs (FOREIGN_GAME_NATIVE, see hle_stubs.h).
 +
@@ -8513,9 +8513,17 @@ index 0000000..14db207
 +FOREIGN_GAME_WRAPPER(WFCPGD, 80091FC8, LifeKing_FrameWait);
 +
 +// System::SetFrameRate(f1 = fps): 60 instead of the TV's 30 (or 25).
++// It also halves nw4r::g3d::FrameCtrl::smBaseUpdateRate (0x8039D818, 1.0; FrameCtrl::UpdateFrame at
++// 0x801B16C8 adds rate * it to the frame each update), so every model animation keeps its speed.
++constexpr uint32_t kG3dBaseUpdateRate = 0x8039D818u;
 +extern "C" void LifeKing_SetFrameRate(CpuContext* ctx) {
 +    if (LifeKing60Hz()) {
++        RT_LOGF("lifeking", "engine frame rate %.0f -> 60, g3d base update rate 0.5\n", ctx->fpr[1].d);
 +        ctx->fpr[1].d = 60.0;
++        const float half = 0.5f;
++        uint32_t bits;
++        std::memcpy(&bits, &half, sizeof(bits));
++        Memory::Write32(kG3dBaseUpdateRate, bits);
 +    }
 +    GuestFunctions::BaseTranslation(0x80033664u)(ctx);
 +}
@@ -8971,7 +8979,7 @@ index 6111b20..96f48f1 100644
                  LogNandWarning("IOS_Ioctlv", "unsupported /dev/es cmd=%u", cmd);
                  return ISFS_EINVAL;
 diff --git a/runtime/src/hle/storage/riivolution.cpp b/runtime/src/hle/storage/riivolution.cpp
-index 00659d0..ad2c6cf 100644
+index 00659d0..8455ec8 100644
 --- a/runtime/src/hle/storage/riivolution.cpp
 +++ b/runtime/src/hle/storage/riivolution.cpp
 @@ -12,6 +12,7 @@
@@ -8982,7 +8990,28 @@ index 00659d0..ad2c6cf 100644
  #include "recomp_mod_loader.h"
  #include "runtime_config.h"
  #include "runtime_log.h"
-@@ -147,6 +148,12 @@ std::vector<RuntimeRiivolution::Overlay> RiivoDiscoverRoots() {
+@@ -19,6 +20,7 @@
+ 
+ #include <algorithm>
+ #include <cctype>
++#include <cstdlib>
+ #include <fstream>
+ #include <iostream>
+ #include <mutex>
+@@ -122,6 +124,12 @@ void RiivoAddRoot(std::vector<RuntimeRiivolution::Overlay>& overlays, fs::path r
+ std::vector<RuntimeRiivolution::Overlay> RiivoDiscoverRoots() {
+     std::vector<RuntimeRiivolution::Overlay> overlays;
+ 
++    // LifeKing: LIFEKING_OVERLAY_ROOT (set by the 60 FPS launcher) is a disc-shaped folder of
++    // patched files, e.g. the 60 Hz scripts made by port/lk-tools/make_fps60_scripts.py.
++    if (const char* lifeKingRoot = std::getenv("LIFEKING_OVERLAY_ROOT"); lifeKingRoot != nullptr && *lifeKingRoot) {
++        RiivoAddRoot(overlays, PathFromUtf8(lifeKingRoot), "LIFEKING_OVERLAY_ROOT");
++    }
++
+     // Discovery order is precedence order: DVDInit applies the roots in
+     // reverse, so an explicitly configured root (command line first, then
+     // Config.toml) always outranks the mod manifest.
+@@ -147,6 +155,12 @@ std::vector<RuntimeRiivolution::Overlay> RiivoDiscoverRoots() {
          RiivoAddRoot(overlays, root, "recomp mod manifest");
      }
  
