@@ -32,6 +32,11 @@ The decompilation in the rest of this repository keeps its own licence.
 - The app is called **KingLife** (`KingLife.exe`, blue crystal icon drawn by `tools/make_icon.py`); the
   window shows "KingLife <version>", written once in `runtime/include/lifeking_version.h`.
 
+- **Add-on content (DLC)**: the 15 packs of the WiiWare DLC (title 00010005-77464350), from your own
+  dump. Put its decrypted contents (`00000000.app`... with `0001000577464350.tmd` and `.tik`) in a
+  folder and run `python port/tools/install_dlc.py <folder>`: it checks them against the TMD, copies
+  them to `port/lifeking-data/dlc/` and makes their 60 FPS copies. `--remove` takes them out again.
+
 Tip: leave F10's frame interpolation Off. It costs a lot on the render thread, and since the game's
 logic is tied to its frames, it slowed the game and the music in heavy scenes (Chime, buildings).
 

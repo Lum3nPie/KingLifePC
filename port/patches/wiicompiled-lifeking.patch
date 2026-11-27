@@ -11512,23 +11512,25 @@ index ef9caac..b5dd2dc 100644
  } // anonymous namespace
  
 diff --git a/runtime/src/hle/storage/nand_isfs.cpp b/runtime/src/hle/storage/nand_isfs.cpp
-index 6111b20..853da27 100644
+index 6111b20..e10d2eb 100644
 --- a/runtime/src/hle/storage/nand_isfs.cpp
 +++ b/runtime/src/hle/storage/nand_isfs.cpp
-@@ -6,6 +6,12 @@
+@@ -6,6 +6,14 @@
  
  #include "discord_presence.h"
  #include "runtime_log.h"
 +#include "runtime_config.h"
 +#include <cstdio>
 +#include <cstdlib>
++#include <cstring>
 +#include <filesystem>
 +#include <mutex>
 +#include <string_view>
++#include <vector>
  
  extern "C" void OSSleepThread_HLE_801aa9b8(CpuContext* ctx);
  
-@@ -64,6 +70,72 @@ static constexpr uint32_t ES_IOCTL_GETDEVICEID = 0x07;
+@@ -64,6 +72,122 @@ static constexpr uint32_t ES_IOCTL_GETDEVICEID = 0x07;
  static constexpr uint32_t ES_IOCTL_GETDEVICECERT = 0x1E;
  static constexpr uint32_t ES_IOCTL_GETTITLEID = 0x20;
  static constexpr uint32_t ES_IOCTL_SIGN = 0x30;
@@ -11548,11 +11550,22 @@ index 6111b20..853da27 100644
 +std::mutex g_contentMutex;
 +OpenContentFile g_contentFiles[16];
 +
-+int32_t OpenTitleContent(uint32_t index) {
++// LifeKing: the add-on content (DLC) is its own title, 00010005-77464350. The game's CNT library
++// opens its contents through ES OpenContent with that title id, probing indexes 1 to 29 (one pack
++// each). They are read from the folder "dlc" next to "content" (port/lifeking-data/dlc, filled by
++// install_dlc.py of the port tools), and from "dlc" of the 60 FPS overlay when present there.
++constexpr uint32_t kDlcTitleIdHi = 0x00010005u;
++
++std::filesystem::path DlcFolder() {
++    return RuntimeConfigFile::ResolvedDvdRoot().parent_path() / "dlc";
++}
++
++int32_t OpenTitleContent(uint32_t index, bool dlc = false) {
 +    const std::filesystem::path root = RuntimeConfigFile::ResolvedDvdRoot();
++    const char* folder = dlc ? "dlc" : "content";
 +    char name[32];
 +    std::snprintf(name, sizeof(name), "%08x.app", index);
-+    std::filesystem::path path = root.parent_path() / "content" / name;
++    std::filesystem::path path = root.parent_path() / folder / name;
 +    // LifeKing: LIFEKING_OVERLAY_ROOT/content/<index>.app, when present, replaces the content (the
 +    // 60 FPS launcher's patched data archive, made by port/lk-tools/make_fps60_scripts.py).
 +    // Without the variable, the 60 FPS default uses port/lifeking-mod60 (next to lifeking-data, made by
@@ -11565,10 +11578,10 @@ index 6111b20..853da27 100644
 +    }
 +    if (!overlayRoot.empty()) {
 +        std::error_code ec;
-+        const std::filesystem::path patched = overlayRoot / "content" / name;
++        const std::filesystem::path patched = overlayRoot / folder / name;
 +        if (std::filesystem::is_regular_file(patched, ec)) {
 +            path = patched;
-+            RT_LOGF("lifeking", "content %u from %s\n", index, path.string().c_str());
++            RT_LOGF("lifeking", "%s %u from %s\n", folder, index, path.string().c_str());
 +        }
 +    }
 +    std::FILE* f = nullptr;
@@ -11578,6 +11591,9 @@ index 6111b20..853da27 100644
 +    f = std::fopen(path.string().c_str(), "rb");
 +#endif
 +    if (!f) {
++        if (dlc) {
++            return -106;  // pack not installed: the game probes every index, keep the log quiet
++        }
 +        LogNandWarning("ES_OpenContent", "content %u not found (%s)", index, path.string().c_str());
 +        return -106;  // ES_EINVAL-like: content missing
 +    }
@@ -11585,12 +11601,48 @@ index 6111b20..853da27 100644
 +    for (int32_t i = 0; i < 16; ++i) {
 +        if (!g_contentFiles[i].file) {
 +            g_contentFiles[i].file = f;
-+            std::fprintf(stderr, "[es] content %u opened as cfd %d\n", index, i);
++            std::fprintf(stderr, "[es] %s %u opened as cfd %d\n", dlc ? "DLC content" : "content", index, i);
 +            return i;
 +        }
 +    }
 +    std::fclose(f);
 +    return -1017;
++}
++
++// The ticket view of the DLC (0xD8 bytes: the ticket's version, then the ticket from its ticket id
++// on), from the player's own .tik when install_dlc.py copied it, else one that owns every content.
++void WriteDlcTicketView(uint8_t* view, uint32_t size, uint64_t titleId) {
++    std::memset(view, 0, size);
++    std::vector<uint8_t> tik;
++    char tikName[40];
++    std::snprintf(tikName, sizeof(tikName), "%016llx.tik", static_cast<unsigned long long>(titleId));
++    std::error_code ec;
++    const std::filesystem::path tikPath = DlcFolder() / tikName;
++    if (std::filesystem::is_regular_file(tikPath, ec)) {
++#if defined(_WIN32)
++        std::FILE* f = _wfopen(tikPath.wstring().c_str(), L"rb");
++#else
++        std::FILE* f = std::fopen(tikPath.string().c_str(), "rb");
++#endif
++        if (f) {
++            tik.resize(0x2A4);
++            if (std::fread(tik.data(), 1, tik.size(), f) != tik.size()) {
++                tik.clear();
++            }
++            std::fclose(f);
++        }
++    }
++    uint8_t built[0xD8] = {};
++    if (!tik.empty()) {
++        built[3] = tik[0x1BC];
++        std::memcpy(built + 4, tik.data() + 0x1D0, sizeof(built) - 4);
++    } else {
++        for (int i = 0; i < 8; ++i) {
++            built[0x10 + i] = static_cast<uint8_t>(titleId >> (56 - 8 * i));
++        }
++        std::memset(built + 0x56, 0xFF, 0x40);  // content access mask: every pack owned
++    }
++    std::memcpy(view, built, size < sizeof(built) ? size : sizeof(built));
 +}
 +
 +std::FILE* ContentFile(uint32_t cfd) {
@@ -11601,7 +11653,7 @@ index 6111b20..853da27 100644
  static constexpr uint32_t DOLPHIN_IOCTL_GET_ELAPSED_TIME = 0x01;
  static constexpr uint32_t DOLPHIN_IOCTL_GET_VERSION = 0x02;
  static constexpr uint32_t DOLPHIN_IOCTL_GET_SPEED_LIMIT = 0x03;
-@@ -110,7 +182,7 @@ static IosVector ReadIosVector(uint32_t vectorPtr, uint32_t index) {
+@@ -110,7 +234,7 @@ static IosVector ReadIosVector(uint32_t vectorPtr, uint32_t index) {
  
  static uint64_t CurrentMkwTitleId() {
      uint32_t low = CurrentMkwTitleIdLo();
@@ -11610,7 +11662,7 @@ index 6111b20..853da27 100644
  }
  
  static bool WriteGuestBytes(uint32_t address, uint32_t size, const uint8_t* data, size_t dataSize) {
-@@ -871,7 +943,7 @@ int32_t ISFS_OpenLib_Initialize(CpuContext* ctx) {
+@@ -871,7 +995,7 @@ int32_t ISFS_OpenLib_Initialize(CpuContext* ctx) {
      
      // Create the title data directory if it doesn't exist
      char titleId[32];
@@ -11619,7 +11671,7 @@ index 6111b20..853da27 100644
      char gameId[32];
      std::snprintf(gameId, sizeof(gameId), "%08x", CurrentMkwTitleIdLo());
      CreateDirectoryPath(GetNandBasePath() / "title" / titleId / gameId / "data");
-@@ -1017,6 +1089,46 @@ static int32_t HandleIsfsReadDir(uint32_t numIn, uint32_t numOut, uint32_t vecto
+@@ -1017,6 +1141,46 @@ static int32_t HandleIsfsReadDir(uint32_t numIn, uint32_t numOut, uint32_t vecto
      return ISFS_OK;
  }
  
@@ -11666,7 +11718,7 @@ index 6111b20..853da27 100644
  extern "C" int32_t NAND_IOS_Ioctlv_HLE(
      uint32_t fd,
      uint32_t cmd,
-@@ -1047,6 +1159,9 @@ extern "C" int32_t NAND_IOS_Ioctlv_HLE(
+@@ -1047,6 +1211,9 @@ extern "C" int32_t NAND_IOS_Ioctlv_HLE(
          if (cmd == ISFS_IOCTL_READDIR) {
              return HandleIsfsReadDir(numIn, numOut, vectorPtr);
          }
@@ -11676,7 +11728,7 @@ index 6111b20..853da27 100644
          return ISFS_OK;
      }
  
-@@ -1116,6 +1231,94 @@ extern "C" int32_t NAND_IOS_Ioctlv_HLE(
+@@ -1116,6 +1283,110 @@ extern "C" int32_t NAND_IOS_Ioctlv_HLE(
                  return ISFS_OK;
              }
  
@@ -11702,6 +11754,16 @@ index 6111b20..853da27 100644
 +                if (out.size == 0 || !Memory::Contains(out.address, out.size)) {
 +                    return ISFS_EINVAL;
 +                }
++                if (cmd == 0x13 && numIn >= 1) {
++                    const IosVector titleIn = ReadIosVector(vectorPtr, 0);
++                    if (titleIn.size >= 8 && Memory::Contains(titleIn.address, 8) &&
++                        Memory::Read32(titleIn.address) == kDlcTitleIdHi) {
++                        const uint64_t dlcTitle = (static_cast<uint64_t>(kDlcTitleIdHi) << 32) |
++                                                  Memory::Read32(titleIn.address + 4u);
++                        WriteDlcTicketView(Memory::GetPointer(out.address, out.size), out.size, dlcTitle);
++                        return ISFS_OK;
++                    }
++                }
 +                std::memset(Memory::GetPointer(out.address, out.size), 0, out.size);
 +                if (out.size >= 0x18) {
 +                    const uint64_t titleId = CurrentMkwTitleId();
@@ -11721,7 +11783,13 @@ index 6111b20..853da27 100644
 +                if (in.size < 4 || !Memory::Contains(in.address, 4)) {
 +                    return ISFS_EINVAL;
 +                }
-+                return OpenTitleContent(Memory::Read32(in.address));
++                bool dlc = false;
++                if (cmd == ES_IOCTL_OPENCONTENT) {  // in: title id, ticket view, content index
++                    const IosVector titleIn = ReadIosVector(vectorPtr, 0);
++                    dlc = titleIn.size >= 8 && Memory::Contains(titleIn.address, 8) &&
++                          Memory::Read32(titleIn.address) == kDlcTitleIdHi;
++                }
++                return OpenTitleContent(Memory::Read32(in.address), dlc);
 +            }
 +
 +            case ES_IOCTL_READCONTENT: {

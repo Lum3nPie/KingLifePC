@@ -12,7 +12,7 @@ Hand-written notes. Keep them short and up to date. The generated index is in `d
 ## Game and files
 - WiiWare, PAL, title 00010001-57464350 ("WFCP"), maker GD (Square Enix), title version 1.
 - `orig/WFCPGD/sys/main.dol` = NAND content `00000001.app` (SHA-1 ab2944ddbae018d562839a4a48b222ada1d3c915). Boot content 9 is the NAND loader. No REL/RSO.
-- DLC (00010005-57464350, v2) is data only, no code.
+- DLC (00010005-77464350, lowercase "wFCP", v2) is data only, no code; see "Add-on content (DLC)" below.
 - Original files are gitignored (`orig/*/*`). Never commit them.
 
 ## PC port strategy (decided 2026-11-26)
@@ -136,3 +136,10 @@ Rendering goes through aurora on Dawn (WebGPU), which already targets Direct3D 1
 
 ### Controller mapping (checked 27/11, validated by Liara)
 The emulated Wii Remote never connects (console.log: "the game refused L2CAP PSM 0x11"): the game reads the pad through its own PADRead (0x800FB678 -> `PAD__Read_HLE`, `runtime/src/hle/input/pad.cpp`). The game uses GC A = confirm, B = cancel, X = top view, Y = Chime. `ApplyLifeKingLayout` (WFCPGD only) reads the face buttons by SDL position: right -> A, bottom -> B, left -> Y, top -> X. Aurora's own tables differ by brand (Xbox: EAST -> X, WEST -> B), so they are bypassed for these four buttons. The C-stick X is inverted, Y unchanged. The `emulated_remote*.cpp` Classic Controller code has no effect on this game.
+
+### Add-on content (DLC) (27/11)
+- The DLC is title 00010005-77464350 (lowercase "wFCP"), TMD v2, 16 contents: index 0 = banner, 1 to 15 = `script/packN` (package.nut registers `::pack[N]` and sets the game flags; 11/12/14/15 add king and minister costumes). Contents 8, 9 and 10 also carry a newer copy of the game's program scripts (`script/ProgramArchlordComp_en_us.nut.press`, `ProgramSystemComp.nut.press`, `loadComp.nut.press`) and a `gameStart.nut` that loads them with `CIncludeOptionalFile(name, ::dataTitleCode, ::gameStartVersion)`: with the DLC, the game runs those scripts, not content 2's.
+- `.press` = Nintendo LZ11 (byte 0x11 + 24-bit size), `port/tools/lz11.py`.
+- The game probes DLC indexes 1 to 29 at boot through CNT (0x8004340C -> 0x801FE9C8: GetNumTicketViews 0x12, GetTicketViews 0x13, then ES OpenContent 0x24 with title id 0x00010005:<low of its own title>). -0x1391/-0x1392 mean "not there". Before the DLC support the runtime ignored the title id of 0x24 and handed back the base game's contents 2 to 9 for those probes.
+- Runtime (nand_isfs.cpp): 0x24 with title hi 0x00010005 reads `<dvd_root>/../dlc/<index>.app`, or `lifeking-mod60/dlc/` (or `LIFEKING_OVERLAY_ROOT/dlc`) when present; 0x13 for the DLC builds the view from `dlc/0001000577464350.tik` (else a view owning everything). A missing pack returns -106 quietly. 0x12 still answers 1 view for every title.
+- `port/tools/install_dlc.py [<folder>]` checks each decrypted content against the TMD SHA-1, copies them to `lifeking-data/dlc/` and reruns `make_fps60_scripts.py`, which now also patches the program scripts of the DLC packs (decompress, same rules, recompress, rebuild the U8 with `u8pack.py`) into `lifeking-mod60/dlc/`. `--remove` goes back to no DLC.

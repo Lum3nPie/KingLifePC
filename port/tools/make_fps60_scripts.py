@@ -7,6 +7,11 @@ always with replacements of the same length, so no offset of the archive moves. 
 the copy through LIFEKING_OVERLAY_ROOT/content (nand_isfs.cpp), set by the 60 FPS launcher.
 The output is game content: never commit it.
 
+Add-on content (DLC, port/lifeking-data/dlc, see install_dlc.py): packs 8 to 10 carry a newer copy
+of the game's program scripts (script/*.nut.press, LZ11), which the game loads instead of content 2's.
+Those copies get the same replacements: decompressed, patched, compressed again, and their U8
+archive rebuilt into lifeking-mod60/dlc/.
+
 Usage: python make_fps60_scripts.py [--data port/lifeking-data] [--out port/lifeking-mod60]
 """
 import argparse
@@ -14,6 +19,11 @@ import re
 import shutil
 import sys
 from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import lz11  # noqa: E402
+import u8pack  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 
@@ -41,6 +51,44 @@ RULES = [
 ]
 
 
+def patch(data: bytearray, label: str) -> None:
+    for pattern, repl, expected, what in RULES:
+        assert len(pattern) == len(repl), what
+        hits = [m.start() for m in re.finditer(re.escape(pattern), bytes(data))]
+        print(f"{len(hits):5d}  {what}")
+        if len(hits) != expected:
+            sys.exit(f"{label}: expected {expected} matches of {pattern!r}")
+        for at in hits:
+            data[at:at + len(repl)] = repl
+
+
+def patch_dlc(src_dir: Path, out_dir: Path) -> None:
+    """Patched copies of the DLC contents whose scripts hold the 60 Hz rules; the rest is not copied
+    (the runtime falls back to lifeking-data/dlc for a content missing here)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for old in out_dir.glob("*.app"):
+        old.unlink()
+    for app in sorted(src_dir.glob("*.app")):
+        data = app.read_bytes()
+        if not u8pack.is_u8(data):
+            continue
+        replace = {}
+        for path, blob in u8pack.files(data).items():
+            if "/script/" not in path or not path.endswith((".nut", ".nut.press")):
+                continue
+            packed = blob[:1] == b"\x11"
+            text = lz11.decompress(blob) if packed else blob
+            if not any(rule[0] in text for rule in RULES):
+                continue
+            print(f"dlc {app.name}{path}")
+            text = bytearray(text)
+            patch(text, f"{app.name}{path}")
+            replace[path] = lz11.compress(bytes(text)) if packed else bytes(text)
+        if replace:
+            (out_dir / app.name).write_bytes(u8pack.rebuild(data, replace))
+            print(f"wrote {out_dir / app.name}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", type=Path, default=HERE.parent / "lifeking-data")
@@ -50,14 +98,7 @@ def main():
     if not src.is_file():
         sys.exit(f"no data archive at {src}")
     data = bytearray(src.read_bytes())
-    for pattern, repl, expected, what in RULES:
-        assert len(pattern) == len(repl), what
-        hits = [m.start() for m in re.finditer(re.escape(pattern), bytes(data))]
-        print(f"{len(hits):5d}  {what}")
-        if len(hits) != expected:
-            sys.exit(f"expected {expected} matches of {pattern!r}")
-        for at in hits:
-            data[at:at + len(repl)] = repl
+    patch(data, src.name)
     out = args.out / "content" / "00000002.app"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(data)
@@ -65,6 +106,10 @@ def main():
     stale = args.out / "files"
     if stale.is_dir():
         shutil.rmtree(stale)  # earlier versions patched the DVD copy, which the game never reads
+    if (args.data / "dlc").is_dir():
+        patch_dlc(args.data / "dlc", args.out / "dlc")
+    elif (args.out / "dlc").is_dir():
+        shutil.rmtree(args.out / "dlc")
 
 
 if __name__ == "__main__":
