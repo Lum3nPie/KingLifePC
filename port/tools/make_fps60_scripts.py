@@ -21,9 +21,15 @@ FRAMES = "*::CGetFPS()/30"    # frame count -> same duration
 
 # (file glob, regex, replacement, what). Each rule must match at least once, so a game update or a
 # typo shows up instead of silently doing nothing.
+# Speeds are rescaled where the scripts hand them to the engine (and back), so every script keeps
+# working in its own per-30-Hz-frame units, events with constant speeds included.
 RULES = [
-    ("ProgramArchlordComp_*.nut", r"\b(walking_speed|running_speed)=([0-9.]+),",
-     rf"\1=(\2{SPEED}),", "actor walking/running speeds (per frame)"),
+    ("ProgramArchlordComp_*.nut", r"::worldEngine\.setTopSpeed\(([^,()]+), (.+)\);",
+     rf"::worldEngine.setTopSpeed(\1, (\2){SPEED});", "actor top speed, script -> engine"),
+    ("ProgramArchlordComp_*.nut", r"return ::worldEngine\.(getTopSpeed|getSpeed)\(([^()]+)\);",
+     rf"return ::worldEngine.\1(\2){FRAMES};", "actor speed, engine -> script"),
+    ("ProgramArchlordComp_*.nut", r"::worldEngine\.setSpeed\(([^,()]+), ([^;]+)\);",
+     rf"::worldEngine.setSpeed(\1, (\2){SPEED});", "path-following object speed"),
 ]
 
 

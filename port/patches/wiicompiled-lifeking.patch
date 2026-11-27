@@ -8433,10 +8433,10 @@ index 0000000..3840c1e
 +} // namespace TouchControls
 diff --git a/runtime/src/hle/lifeking_natives.cpp b/runtime/src/hle/lifeking_natives.cpp
 new file mode 100644
-index 0000000..bbe3acc
+index 0000000..d204e77
 --- /dev/null
 +++ b/runtime/src/hle/lifeking_natives.cpp
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,284 @@
 +// Natives for My Life as a King (WiiWare PAL, WFCPGD): functions of its own SDK build that need a
 +// host-side answer. Registered only while WFCPGD runs (FOREIGN_GAME_NATIVE, see hle_stubs.h).
 +
@@ -8516,17 +8516,10 @@ index 0000000..bbe3acc
 +FOREIGN_GAME_WRAPPER(WFCPGD, 80091FC8, LifeKing_FrameWait);
 +
 +// System::SetFrameRate(f1 = fps): 60 instead of the TV's 30 (or 25).
-+// It also halves nw4r::g3d::FrameCtrl::smBaseUpdateRate (0x8039D818, 1.0; FrameCtrl::UpdateFrame at
-+// 0x801B16C8 adds rate * it to the frame each update), so every model animation keeps its speed.
-+constexpr uint32_t kG3dBaseUpdateRate = 0x8039D818u;
 +extern "C" void LifeKing_SetFrameRate(CpuContext* ctx) {
 +    if (LifeKing60Hz()) {
-+        RT_LOGF("lifeking", "engine frame rate %.0f -> 60, g3d base update rate 0.5\n", ctx->fpr[1].d);
++        RT_LOGF("lifeking", "engine frame rate %.0f -> 60\n", ctx->fpr[1].d);
 +        ctx->fpr[1].d = 60.0;
-+        const float half = 0.5f;
-+        uint32_t bits;
-+        std::memcpy(&bits, &half, sizeof(bits));
-+        Memory::Write32(kG3dBaseUpdateRate, bits);
 +    }
 +    GuestFunctions::BaseTranslation(0x80033664u)(ctx);
 +}
@@ -8610,8 +8603,56 @@ index 0000000..bbe3acc
 +    g_animFrames = 0;
 +}
 +
++// 60 Hz: model animations step once per frame by FrameCtrl rate * smBaseUpdateRate. Most run at a
++// rate the game sets once (a motion starts at 1.0), and those get half the step. The locomotion code,
++// though, sets the rate every frame from the actor's speed, which the 60 Hz scripts already halve:
++// halving those again made walking (king, Chime) run at a quarter. So an object whose rate was set
++// on each of the last few frames keeps the full step.
++constexpr uint32_t kG3dBaseUpdateRate = 0x8039D818u;  // nw4r::g3d::FrameCtrl::smBaseUpdateRate
++constexpr uint32_t kSpeedDrivenStreak = 3;
++struct RateSetInfo {
++    uint32_t lastFrame = 0;
++    uint32_t streak = 0;
++};
++std::map<uint32_t, RateSetInfo> g_rateSets;
++uint32_t g_gameFrame = 0;
++std::map<uint64_t, uint32_t> g_rateSetters;  // (LR << 16 | rate * 100) -> calls, for the trace
++
++void SetBaseUpdateRate(float value) {
++    uint32_t bits;
++    std::memcpy(&bits, &value, sizeof(bits));
++    Memory::Write32(kG3dBaseUpdateRate, bits);
++}
++
++template <uint32_t Address>
++void LifeKing_AnimSetRate(CpuContext* ctx) {
++    if (LifeKing60Hz()) {
++        RateSetInfo& info = g_rateSets[ctx->gpr[3]];
++        if (info.lastFrame + 1 >= g_gameFrame && info.lastFrame != g_gameFrame) {
++            ++info.streak;
++        } else if (info.lastFrame != g_gameFrame) {
++            info.streak = 1;
++        }
++        info.lastFrame = g_gameFrame;
++        if (LifeKingAnimTrace()) {
++            const int rate = static_cast<int>(ctx->fpr[1].d * 100.0 + 0.5);
++            ++g_rateSetters[(static_cast<uint64_t>(ctx->lr) << 16) | (static_cast<uint32_t>(rate) & 0xFFFF)];
++        }
++    }
++    GuestFunctions::BaseTranslation(Address)(ctx);
++}
++
++bool SpeedDriven(uint32_t obj) {
++    const auto it = g_rateSets.find(obj);
++    return it != g_rateSets.end() && it->second.streak >= kSpeedDrivenStreak &&
++           it->second.lastFrame + 1 >= g_gameFrame;
++}
++
 +template <int K>
 +void LifeKing_AnimUpdate(CpuContext* ctx) {
++    if (LifeKing60Hz()) {
++        SetBaseUpdateRate(SpeedDriven(ctx->gpr[3]) ? 1.0f : 0.5f);
++    }
 +    if (LifeKingAnimTrace()) {
 +        const uint32_t obj = ctx->gpr[3];
 +        uint32_t bits = Memory::Read32(obj + kAnimKinds[K].rateOffset);
@@ -8627,8 +8668,44 @@ index 0000000..bbe3acc
 +} // namespace
 +
 +extern "C" void LifeKing_AnimTraceFrame() {
-+    if (LifeKingAnimTrace()) ReportAnimTrace();
++    ++g_gameFrame;
++    if (g_rateSets.size() > 4096) {
++        for (auto it = g_rateSets.begin(); it != g_rateSets.end();) {
++            it = it->second.lastFrame + 600 < g_gameFrame ? g_rateSets.erase(it) : std::next(it);
++        }
++    }
++    if (!LifeKingAnimTrace()) return;
++    if (g_animFrames + 1 >= 300 && !g_rateSetters.empty()) {
++        std::multimap<uint32_t, uint64_t, std::greater<>> byCount;
++        for (const auto& [key, n] : g_rateSetters) byCount.emplace(n, key);
++        char line[512];
++        int len = std::snprintf(line, sizeof(line), "anim rate setters (caller rate xcalls):");
++        int shown = 0;
++        for (const auto& [n, key] : byCount) {
++            if (shown++ == 10 || len >= static_cast<int>(sizeof(line)) - 32) break;
++            len += std::snprintf(line + len, sizeof(line) - len, " %08X %.2f x%u", static_cast<uint32_t>(key >> 16),
++                                 static_cast<int16_t>(key & 0xFFFF) / 100.0, n);
++        }
++        RT_LOGF("lifeking", "%s\n", line);
++        g_rateSetters.clear();
++    }
++    ReportAnimTrace();
 +}
++
++extern "C" void LifeKing_AnimSetRate0(CpuContext* ctx) { LifeKing_AnimSetRate<0x801B16B8u>(ctx); }
++extern "C" void LifeKing_AnimSetRate1(CpuContext* ctx) { LifeKing_AnimSetRate<0x801B1EA4u>(ctx); }
++extern "C" void LifeKing_AnimSetRate2(CpuContext* ctx) { LifeKing_AnimSetRate<0x801B2C28u>(ctx); }
++extern "C" void LifeKing_AnimSetRate3(CpuContext* ctx) { LifeKing_AnimSetRate<0x801B3654u>(ctx); }
++extern "C" void LifeKing_AnimSetRate4(CpuContext* ctx) { LifeKing_AnimSetRate<0x801B5200u>(ctx); }
++extern "C" void LifeKing_AnimSetRate5(CpuContext* ctx) { LifeKing_AnimSetRate<0x801B6028u>(ctx); }
++extern "C" void LifeKing_AnimSetRate6(CpuContext* ctx) { LifeKing_AnimSetRate<0x801B6F50u>(ctx); }
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B16B8, LifeKing_AnimSetRate0);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B1EA4, LifeKing_AnimSetRate1);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B2C28, LifeKing_AnimSetRate2);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B3654, LifeKing_AnimSetRate3);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B5200, LifeKing_AnimSetRate4);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B6028, LifeKing_AnimSetRate5);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B6F50, LifeKing_AnimSetRate6);
 +
 +extern "C" void LifeKing_AnimUpdate0(CpuContext* ctx) { LifeKing_AnimUpdate<0>(ctx); }
 +extern "C" void LifeKing_AnimUpdate1(CpuContext* ctx) { LifeKing_AnimUpdate<1>(ctx); }
