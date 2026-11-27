@@ -24,7 +24,7 @@ The decompilation in the rest of this repository keeps its own licence.
   Controller: right (Xbox B) confirms, bottom (Xbox A) cancels, left (Xbox X) calls Chime, top
   (Xbox Y) is the top view. Left and right are swapped on the right stick, so the view turns the
   way it is pushed. F10 opens the settings (bindings, graphics API, resolution...).
-- Sound, 16:9 picture stretched to the window.
+- Sound, 16:9 picture that keeps its shape in any window size or in full screen (black bars).
 - **Native 60 FPS** (new in v0.2): the game logic runs at 60 Hz with game, animations, cutscenes,
   effects, menus and music at their normal speed, without frame interpolation. `LIFEKING_FPS=30`
   gives the original 30 FPS. The 60 FPS mode needs a patched copy of the data archive, which
