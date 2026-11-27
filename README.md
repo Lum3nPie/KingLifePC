@@ -1,66 +1,71 @@
-decomp-toolkit Project Template
-===============================
+# KingLife
 
-If starting a new GameCube / Wii decompilation project, this repository can be used as a scaffold.
+**KingLife** is a native Windows port of *My Life as a King* (WiiWare, PAL, `WFCPGD`), the city-building
+game from 2008. The port is a **static recompilation**, not an emulator: the game's PowerPC code is
+translated to C++ by [WiiCompiled](https://github.com/patchzyy/Wiicompiled) and runs on its runtime,
+with rendering through [aurora](https://github.com/encounter/aurora) (Direct3D 12 or Vulkan).
 
-See [decomp-toolkit](https://github.com/encounter/decomp-toolkit) for background on the concept and more information on the tooling used.
+Current version: **0.4**.
 
-Documentation
--------------
+> **No game files are in this repository, and none are distributed.** To build and play KingLife you
+> need your own dump of the game (and of its add-on content, if you want it).
 
-- [Dependencies](docs/dependencies.md)
-- [Getting Started](docs/getting_started.md)
-- [`symbols.txt`](docs/symbols.md)
-- [`splits.txt`](docs/splits.md)
-- [GitHub Actions](docs/github_actions.md)
+## Features
 
-General:
+- **Native 60 FPS.** The game logic runs at 60 Hz, with gameplay, animations, cutscenes, effects,
+  menus and music at their normal speed, without frame interpolation. The original 30 FPS is one
+  launcher away (`LIFEKING_FPS=30`).
+- **Controllers.** Xbox, DualSense and other SDL pads, laid out by position like a Wii Classic
+  Controller: right button (Xbox B) confirms, bottom (Xbox A) cancels, left (Xbox X) calls Chime,
+  top (Xbox Y) is the top view. The right stick moves the view the way it is pushed. Keyboard and
+  mouse (as the pointer) work too. F10 opens the settings (bindings, graphics API, resolution...).
+- **16:9 picture** that keeps its shape in any window size or in full screen, with black bars.
+- **Add-on content (DLC).** The 15 packs of the WiiWare DLC, installed from your own dump with
+  `port/tools/install_dlc.py`.
+- Sound, and a native `KingLife.exe` with its own icon.
 
-- [Common BSS](docs/common_bss.md)
-- [`.comment` section](docs/comment_section.md)
+## What you need
 
-References
---------
+- Windows (x64).
+- Your own decrypted dump of the WiiWare title `00010001-57464350` (contents `00000000.app` to
+  `00000009.app`). The DLC (`00010005-77464350`) is optional.
+- To build: .NET 8 SDK, CMake 3.25 or later, Ninja, LLVM-MinGW (clang) and Python 3.
 
-- [Discord: GC/Wii Decompilation](https://discord.gg/hKx3FJJgrV) (Come to `#dtk` for help!)
-- [objdiff](https://github.com/encounter/objdiff) (Local diffing tool)
-- [decomp.me](https://decomp.me) (Collaborate on matches)
-- [decomp.dev](https://decomp.dev) (Decompilation progress hub and API)
-- [wibo](https://github.com/decompals/wibo) (Minimal Win32 wrapper for Linux)
-- [sjiswrap](https://github.com/encounter/sjiswrap) (UTF-8 to Shift JIS wrapper)
+## Building and playing
 
-Nearly all active GC/Wii decompilation projects use this structure, and will be useful
-for reference. A list of active GC/Wii projects can be found on [decomp.dev](https://decomp.dev).
+The full steps (WiiCompiled clone and patches, game data layout, build script) are in
+[`port/README.md`](port/README.md). In short:
 
-Features
---------
+1. Clone WiiCompiled into `port/Wiicompiled` at the pinned commit and apply `port/patches/`.
+2. Put your decrypted contents in `port/lifeking-data/content/` and extract the game data.
+3. Run `pwsh port/tools/build.ps1`. It builds `KingLife.exe` in
+   `port/Wiicompiled/build/lifeking-native` and makes the 60 FPS data patch from your own files.
+4. Optional: `python port/tools/install_dlc.py <folder with your DLC contents>`.
+5. Start `KingLife.exe` from its folder.
 
-- Few external dependencies: Just `python` for the generator and `ninja` for the build system. See [Dependencies](docs/dependencies.md).
-- Simple configuration: Everything lives in `config.yml`, `symbols.txt`, and `splits.txt`.
-- Multi-version support: Separate configurations for each game version, and a `configure.py --version` flag to switch between them.
-- Feature-rich analyzer: Many time-consuming tasks are automated, allowing you to focus on the decompilation itself. See [Analyzer features](https://github.com/encounter/decomp-toolkit#analyzer-features).
-- REL support: RELs each have their own `symbols.txt` and `splits.txt`, and will automatically be built and linked against the main binary.
-- No manual assembly: decomp-toolkit handles splitting the DOL into relocatable objects based on the configuration. No game assets are committed to the repository.
-- Progress calculation and integration with [decomp.dev](https://decomp.dev).
-- Integration with [objdiff](https://github.com/encounter/objdiff) for a diffing workflow.
-- CI workflow template for GitHub Actions.
+## Repository layout
 
-Project structure
------------------
+- `port/`: the PC port (WiiCompiled patches, recompiler project, build and data tools).
+- `config/`, `src/`, `include/`: a decompilation of the game, built with
+  [decomp-toolkit](https://github.com/encounter/decomp-toolkit). It is the reference used to name the
+  game's functions for the port.
+- `docs/NOTES.md`: the project notes (how the port was made, 60 FPS work, controller, DLC).
 
-- `configure.py` - Project configuration and generator script.
-- `config/[GAMEID]` - Configuration files for each game version.
-- `config/[GAMEID]/build.sha1` - SHA-1 hashes for each built artifact, for final verification.
-- `build/` - Build artifacts generated by the the build process. Ignored by `.gitignore`.
-- `orig/[GAMEID]` - Original game files, extracted from the disc. Ignored by `.gitignore`.
-- `orig/[GAMEID]/.gitkeep` - Empty checked-in file to ensure the directory is created on clone.
-- `src/` - C/C++ source files.
-- `include/` - C/C++ header files.
-- `tools/` - Scripts shared between projects.
+## Licence
 
-Temporary, delete when done:
+Everything under `port/` is **GPL-3.0** (see `port/LICENSE`), because it patches WiiCompiled
+(GPL-3.0) and reuses the foreign-game patches of
+[HarvestMoonAnimalParadeRecomp](https://github.com/RodoLy/HarvestMoonAnimalParadeRecomp) (GPL-3.0).
+The rest of the repository comes from
+[dtk-template](https://github.com/encounter/dtk-template) and keeps its CC0 licence (`LICENSE`).
+*My Life as a King* belongs to its rights holders. This project is not affiliated with them.
 
-- `config/GAMEID/config.example.yml` - Example configuration file and documentation.
-- `docs/` - Documentation for decomp-toolkit configuration.
-- `README.md` - This file, replace with your own. For a template, see [`README.example.md`](README.example.md).
-- `LICENSE` - This repository is licensed under the CC0 license. Replace with your own if desired.
+## Credits
+
+- [WiiCompiled](https://github.com/patchzyy/Wiicompiled): Wii static recompiler and runtime.
+- [HarvestMoonAnimalParadeRecomp](https://github.com/RodoLy/HarvestMoonAnimalParadeRecomp):
+  foreign-game support for the WiiCompiled runtime.
+- [aurora](https://github.com/encounter/aurora): GX rendering layer (on Dawn) and SDL input.
+- [decomp-toolkit](https://github.com/encounter/decomp-toolkit) and
+  [dtk-template](https://github.com/encounter/dtk-template): the decompilation tooling.
+- [Dolphin](https://github.com/dolphin-emu/dolphin): reference for the hardware and the SDK.

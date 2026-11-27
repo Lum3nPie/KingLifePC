@@ -1,4 +1,4 @@
-# KingLife: My Life as a King PC port (v0.3)
+# KingLife: My Life as a King PC port (v0.4)
 
 A native Windows build of *My Life as a King* (WiiWare, PAL, `WFCP`), made by **static
 recompilation**: the game's PowerPC code is translated to C++ by
@@ -16,13 +16,13 @@ reuses the foreign-game patches of
 [HarvestMoonAnimalParadeRecomp](https://github.com/RodoLy/HarvestMoonAnimalParadeRecomp) (GPL-3.0).
 The decompilation in the rest of this repository keeps its own licence.
 
-## What works (v0.3)
+## What works (v0.4)
 
 - Boots to the title screen, new game, prologue and play.
 - Controls: any pad (Xbox Series, DualSense...) through SDL, keyboard, mouse as the pointer. The
   game reads the pad as a GameCube controller. The face buttons go by position, as on a Wii Classic
   Controller: right (Xbox B) confirms, bottom (Xbox A) cancels, left (Xbox X) calls Chime, top
-  (Xbox Y) is the top view. Left and right are swapped on the right stick, so the view turns the
+  (Xbox Y) is the top view. Both axes of the right stick are turned around, so the view moves the
   way it is pushed. F10 opens the settings (bindings, graphics API, resolution...).
 - Sound, 16:9 picture that keeps its shape in any window size or in full screen (black bars).
 - **Native 60 FPS** (new in v0.2): the game logic runs at 60 Hz with game, animations, cutscenes,

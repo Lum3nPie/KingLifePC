@@ -1288,7 +1288,7 @@ index e3ba175..46585bb 100644
 +        false, kPpcAllNonvolatileFprMask, 0, 0, &AbiRawCpuThunk<&name>::Invoke)
 diff --git a/runtime/include/lifeking_version.h b/runtime/include/lifeking_version.h
 new file mode 100644
-index 0000000..05c6f37
+index 0000000..d33c4b6
 --- /dev/null
 +++ b/runtime/include/lifeking_version.h
 @@ -0,0 +1,6 @@
@@ -1296,7 +1296,7 @@ index 0000000..05c6f37
 +
 +// KingLife (PC port of My Life as a King): the one place the version is written. The app's name is
 +// "KingLife <version>" (window title, startup screen, settings bar); the git tag is v<version>.
-+#define LIFEKING_VERSION "0.3"
++#define LIFEKING_VERSION "0.4"
 +#define LIFEKING_APP_NAME "KingLife " LIFEKING_VERSION
 diff --git a/runtime/include/perf_stats.h b/runtime/include/perf_stats.h
 index 4152ec0..cc9a849 100644
@@ -10232,7 +10232,7 @@ index ac8983e..9f64a86 100644
                  g_consumerWaiting.store(true, std::memory_order_seq_cst);
                  while (g_head.load(std::memory_order_seq_cst) == tail && !g_stop.load(std::memory_order_acquire)) {
 diff --git a/runtime/src/hle/input/pad.cpp b/runtime/src/hle/input/pad.cpp
-index c0c6b67..0afbdfe 100644
+index c0c6b67..085ceb2 100644
 --- a/runtime/src/hle/input/pad.cpp
 +++ b/runtime/src/hle/input/pad.cpp
 @@ -3,6 +3,7 @@
@@ -10243,15 +10243,15 @@ index c0c6b67..0afbdfe 100644
  
  #include <algorithm>
  #include <atomic>
-@@ -70,6 +71,42 @@ void FillTriggersHeldByButtons(PADStatus* statuses) {
+@@ -70,6 +71,43 @@ void FillTriggersHeldByButtons(PADStatus* statuses) {
      }
  }
  
 +// LifeKing (My Life as a King, WFCPGD) reads the GameCube pad. Its face buttons go by position,
 +// the way a Wii Classic Controller has them, whatever the controller's brand (SDL names them by
 +// position): right -> A (confirm), bottom -> B (cancel), left -> Y (Chime), top -> X (top view). And the game
-+// turns the view the other way from the C-stick (pushed left it turns right), so left and right
-+// are swapped on it. The game itself is left as it is.
++// moves the view the other way from the C-stick (pushed left it turns right, pushed up it goes
++// down), so both of its axes are turned around. The game itself is left as it is.
 +void ApplyLifeKingLayout(PADStatus* statuses) {
 +    const char* id = GuestRegion::CurrentFacts().gameId;
 +    if (!GuestRegion::IsForeignGame() || id == nullptr || std::strcmp(id, "WFCPGD") != 0) {
@@ -10265,6 +10265,7 @@ index c0c6b67..0afbdfe 100644
 +            continue;
 +        }
 +        status.substickX = static_cast<s8>(std::clamp(-static_cast<int>(status.substickX), -127, 127));
++        status.substickY = static_cast<s8>(std::clamp(-static_cast<int>(status.substickY), -127, 127));
 +        const s32 index = PADGetIndexForPort(port);
 +        SDL_Gamepad* gamepad = index < 0 ? nullptr : PADGetSDLGamepadForIndex(static_cast<u32>(index));
 +        if (gamepad == nullptr || blocked) {
@@ -10286,7 +10287,7 @@ index c0c6b67..0afbdfe 100644
  void WritePadStatus(uint32_t base, const PADStatus& status) {
      const auto guestStatus = PadStatusContract::Encode({
          status.button,
-@@ -118,6 +155,7 @@ extern "C" uint32_t PAD__Read_HLE(uint32_t statusPtr)
+@@ -118,6 +156,7 @@ extern "C" uint32_t PAD__Read_HLE(uint32_t statusPtr)
      FillTriggersHeldByButtons(statuses);
      InputBindings::Apply(statuses);
      MotionTrick::Apply(statuses);
@@ -11512,7 +11513,7 @@ index ef9caac..b5dd2dc 100644
  } // anonymous namespace
  
 diff --git a/runtime/src/hle/storage/nand_isfs.cpp b/runtime/src/hle/storage/nand_isfs.cpp
-index 6111b20..e10d2eb 100644
+index 6111b20..95563e6 100644
 --- a/runtime/src/hle/storage/nand_isfs.cpp
 +++ b/runtime/src/hle/storage/nand_isfs.cpp
 @@ -6,6 +6,14 @@
