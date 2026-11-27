@@ -3994,7 +3994,7 @@ index 55fe416..99fc9ef 100644
      if (RegistryFrozen().load(std::memory_order_acquire)) {
          RT_LOG(RT_TAG_RUNTIME) << "ERROR: Attempted to register function after registry was finalized: 0x"
 diff --git a/runtime/src/dynamic_aspect.cpp b/runtime/src/dynamic_aspect.cpp
-index 67f94fb..eb5f1f9 100644
+index 67f94fb..c7894ad 100644
 --- a/runtime/src/dynamic_aspect.cpp
 +++ b/runtime/src/dynamic_aspect.cpp
 @@ -3,6 +3,8 @@
@@ -4048,7 +4048,7 @@ index 67f94fb..eb5f1f9 100644
  constexpr uint32_t kEggScreenFlagsOffset = 0x34u;
  constexpr uint16_t kEggScreenFlagFramebufferCanvas = 0x0008u;
  constexpr uint16_t kEggScreenFlagKeepFrustumScale = 0x0040u;
-@@ -159,10 +161,81 @@ void ApplyEggScreenRecords(uint32_t surfaceWidth, uint32_t surfaceHeight) {
+@@ -159,10 +161,82 @@ void ApplyEggScreenRecords(uint32_t surfaceWidth, uint32_t surfaceHeight) {
      }
  }
  
@@ -4071,10 +4071,11 @@ index 67f94fb..eb5f1f9 100644
 +    applied = requested;
 +    // LifeKing: My Life as a King asks SCGetAspectRatio and draws its own 16:9 picture (anamorphic),
 +    // keeping HUD pieces just outside the frame for their slide-in. Widening the picture would show
-+    // them, so "wide" here only stretches the game's own 16:9 frame to the window.
++    // them, and stretching it to the window distorts it, so the frame stays 16:9 whatever the window
++    // or screen shape, with black bars on the sides or top and bottom (aurora's 16:9 policy).
 +    const char* gameId = GuestRegion::CurrentFacts().gameId;
-+    if (requested != 0 && gameId != nullptr && std::strcmp(gameId, "WFCPGD") == 0) {
-+        AuroraSetViewportPolicy(AURORA_VIEWPORT_STRETCH);
++    if (gameId != nullptr && std::strcmp(gameId, "WFCPGD") == 0) {
++        AuroraSetViewportPolicy(AURORA_VIEWPORT_16_9);
 +        VIUnlockAspectRatio();
 +        AuroraSetWidePicture(0.0f);
 +        return;
@@ -4130,7 +4131,7 @@ index 67f94fb..eb5f1f9 100644
      static int lastSweptFrame = -1;
      if (lastSweptFrame == g_gxFrameCount) {
          return;
-@@ -172,6 +245,10 @@ void AssertMkwOffscreenScreenBypass() {
+@@ -172,6 +246,10 @@ void AssertMkwOffscreenScreenBypass() {
  }
  
  void UpdateMkwDynamicAspectSurface(uint32_t surfaceWidth, uint32_t surfaceHeight) {
@@ -4141,7 +4142,7 @@ index 67f94fb..eb5f1f9 100644
      const bool requestedForceAspect = g_requestedForceAspect.load(std::memory_order_acquire);
      if (g_forceAspect != requestedForceAspect) {
          g_forceAspect = requestedForceAspect;
-@@ -198,6 +275,11 @@ void SetMkwForceAspect(bool enabled) {
+@@ -198,6 +276,11 @@ void SetMkwForceAspect(bool enabled) {
  }
  
  void ConfigureMkwDynamicAspect(bool widescreen, bool forceAspect, uint32_t surfaceWidth, uint32_t surfaceHeight) {

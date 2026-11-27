@@ -56,7 +56,7 @@ Other game input code lives around 0x80041500-0x80045000. So an Xbox/DualSense p
 - Facts learned: the game uses DVD calls (WiiWare DVD-on-NAND), polls `WPADGetStatus` in a busy loop at 0x80041A44, uses GXSetDrawDone/GXWaitDrawDone (MKW does not), tries `<file>.press` before each file, loads `/menu/menuSystem_eu.arc` etc.
 
 ### Picture (2026-11-26)
-The HM patch widens the picture of foreign games (they are assumed 4:3). My Life as a King draws its own 16:9 (it asks SCGetAspectRatio) and keeps HUD pieces just outside the frame, so widening showed them in the corners. For WFCPGD the frame is now only stretched to the window (`dynamic_aspect.cpp`).
+The HM patch widens the picture of foreign games (they are assumed 4:3). My Life as a King draws its own 16:9 (it asks SCGetAspectRatio) and keeps HUD pieces just outside the frame, so widening showed them in the corners. For WFCPGD the frame is not widened and stays 16:9 whatever the window or screen shape, with black bars (aurora's 16:9 viewport policy, `dynamic_aspect.cpp`); stretching it to the window distorted it.
 
 ### Sound (2026-11-26)
 No sound at first: the AI DMA natives were not placed. Named in symbols.txt by order and size against MKW: AIRegisterDMACallback 0x800FC2F4, AIGetDMABytesLeft 0x800FC3DC, AIGetDMAStartAddr 0x800FC3EC, AIGetDMALength 0x800FC404, AICheckInit 0x800FC414, DSPCheckMailFromDSP 0x80100C64 (this SDK has no AIGetDSPSampleRate).
