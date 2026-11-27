@@ -8433,10 +8433,10 @@ index 0000000..3840c1e
 +} // namespace TouchControls
 diff --git a/runtime/src/hle/lifeking_natives.cpp b/runtime/src/hle/lifeking_natives.cpp
 new file mode 100644
-index 0000000..ca552ac
+index 0000000..14db207
 --- /dev/null
 +++ b/runtime/src/hle/lifeking_natives.cpp
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,93 @@
 +// Natives for My Life as a King (WiiWare PAL, WFCPGD): functions of its own SDK build that need a
 +// host-side answer. Registered only while WFCPGD runs (FOREIGN_GAME_NATIVE, see hle_stubs.h).
 +
@@ -8475,6 +8475,61 @@ index 0000000..ca552ac
 +FOREIGN_GAME_NATIVE(WFCPGD, 8010470C, LifeKing_GXSetDrawDone_HLE, void, (), ());
 +FOREIGN_GAME_NATIVE(WFCPGD, 801047A4, LifeKing_GXWaitDrawDone_HLE, void, (), ());
 +
++
++// --- 60 Hz mode (LIFEKING_FPS=60, off by default) ---------------------------------------------------
++// The game paces itself to 30 FPS on a 60 Hz TV: its present waits until two VI retraces have passed
++// since the previous frame (0x80091FC8, retrace counter 0x8039DC10 bumped by its post-retrace callback
++// 0x800917DC). Its engine has one frame-rate setting, though: the system object 0x802B1B78 keeps the
++// FPS at +0x10 and the seconds per frame at +0x14, set by 0x80033664 (30 for NTSC/EURGB60, 25 for PAL
++// 50 Hz), and the scripts read them (CGetFPS, CGetSPF, CIsRefreshRate60). The mode waits one retrace,
++// sets the engine to 60 and keeps answering "60 Hz TV" to the scripts.
++#include "guest_abi/cpu_context.h"
++#include "guest_function_imports.h"
++#include "runtime_log.h"
++
++#include <cstdlib>
++#include <cstring>
++
++namespace {
++bool LifeKing60Hz() {
++    static const bool on = [] {
++        const char* value = std::getenv("LIFEKING_FPS");
++        const bool enabled = value != nullptr && std::strcmp(value, "60") == 0;
++        if (enabled) RT_LOGF("lifeking", "60 Hz mode on (LIFEKING_FPS=60)\n");
++        return enabled;
++    }();
++    return on;
++}
++constexpr uint32_t kRetracesSinceFrame = 0x8039DC10u;
++} // namespace
++
++// Frame wait: with one retrace already gone, the game's own code waits for none more; with none, one.
++extern "C" void LifeKing_FrameWait(CpuContext* ctx) {
++    if (LifeKing60Hz() && Memory::Read32(kRetracesSinceFrame) == 0) {
++        Memory::Write32(kRetracesSinceFrame, 1);
++    }
++    GuestFunctions::BaseTranslation(0x80091FC8u)(ctx);
++}
++FOREIGN_GAME_WRAPPER(WFCPGD, 80091FC8, LifeKing_FrameWait);
++
++// System::SetFrameRate(f1 = fps): 60 instead of the TV's 30 (or 25).
++extern "C" void LifeKing_SetFrameRate(CpuContext* ctx) {
++    if (LifeKing60Hz()) {
++        ctx->fpr[1].d = 60.0;
++    }
++    GuestFunctions::BaseTranslation(0x80033664u)(ctx);
++}
++FOREIGN_GAME_WRAPPER(WFCPGD, 80033664, LifeKing_SetFrameRate);
++
++// System::IsRefreshRate60 (fps == 30): still "yes" at 60, so 60 Hz-only paths are kept.
++extern "C" void LifeKing_IsRefreshRate60(CpuContext* ctx) {
++    if (LifeKing60Hz()) {
++        ctx->gpr[3] = 1;
++        return;
++    }
++    GuestFunctions::BaseTranslation(0x8003364Cu)(ctx);
++}
++FOREIGN_GAME_WRAPPER(WFCPGD, 8003364C, LifeKing_IsRefreshRate60);
 diff --git a/runtime/src/hle/os/os_interrupt.cpp b/runtime/src/hle/os/os_interrupt.cpp
 index 56f6871..7eea5ac 100644
 --- a/runtime/src/hle/os/os_interrupt.cpp
