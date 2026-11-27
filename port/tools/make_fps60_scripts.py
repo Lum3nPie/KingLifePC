@@ -31,6 +31,13 @@ RULES = [
     # every EFFECT_TIME frames: 6 frames at 30 Hz, so 12 at 60 Hz.
     (b"static EFFECT_TIME\t= 6;\t", b"static EFFECT_TIME\t=12;\t", 1, "name keyboard cursor blink"),
     (b"static EFFECT_TIME\t\t= 6;\t", b"static EFFECT_TIME\t\t=12;\t", 1, "password keyboard cursor blink"),
+    # Adventuring parties (ArchParty) take one step in their dungeon every FRAMES_PER_STEP frames:
+    # 60 frames, two seconds at 30 Hz. At 60 Hz they explored twice as fast and came home early.
+    (b"static FRAMES_PER_STEP\t\t\t= 60;", b"static FRAMES_PER_STEP\t\t\t=120;", 1, "adventure step interval"),
+    # The city checks every 60 frames whether to send more villagers out, and the adventurer
+    # dispatcher every 90: keep those at two and three seconds.
+    (b"if ( (time % 60) == 20 ) {", b"if ( (time %120) == 20 ) {", 1, "villager pop check interval"),
+    (b"(gameTime % 90) == 0", b"(gameTime %180) == 0", 1, "party creation check interval"),
 ]
 
 
