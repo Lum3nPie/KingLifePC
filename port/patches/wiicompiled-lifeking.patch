@@ -8433,10 +8433,10 @@ index 0000000..3840c1e
 +} // namespace TouchControls
 diff --git a/runtime/src/hle/lifeking_natives.cpp b/runtime/src/hle/lifeking_natives.cpp
 new file mode 100644
-index 0000000..2a42d7a
+index 0000000..8c5b0de
 --- /dev/null
 +++ b/runtime/src/hle/lifeking_natives.cpp
-@@ -0,0 +1,365 @@
+@@ -0,0 +1,431 @@
 +// Natives for My Life as a King (WiiWare PAL, WFCPGD): functions of its own SDK build that need a
 +// host-side answer. Registered only while WFCPGD runs (FOREIGN_GAME_NATIVE, see hle_stubs.h).
 +
@@ -8802,6 +8802,72 @@ index 0000000..2a42d7a
 +FOREIGN_GAME_WRAPPER(WFCPGD, 801B52BC, LifeKing_AnimUpdate4);
 +FOREIGN_GAME_WRAPPER(WFCPGD, 801B60E8, LifeKing_AnimUpdate5);
 +FOREIGN_GAME_WRAPPER(WFCPGD, 801B6F7C, LifeKing_AnimUpdate6);
++
++// --- SetFrame trace (LIFEKING_ANIM_TRACE=1) ---------------------------------------------------------
++// Who sets animation frames directly (menus, buildings?) and whether they step them by a constant
++// amount each game frame, which at 60 Hz would play twice as fast.
++namespace {
++struct SetFrameObj {
++    uint32_t lastGameFrame = 0;
++    float lastFrame = 0.0f;
++};
++struct SetFrameSite {
++    uint32_t calls = 0;
++    uint32_t steps = 0;  // calls one game frame after the previous one on the same object, frame moved up by (0, 4]
++    double stepSum = 0.0;
++};
++std::map<uint32_t, SetFrameObj> g_setFrameObjs;
++std::map<uint32_t, SetFrameSite> g_setFrameSites;
++uint32_t g_setFrameReportAt = 0;
++
++template <uint32_t Address>
++void LifeKing_AnimSetFrame(CpuContext* ctx) {
++    if (LifeKingAnimTrace()) {
++        const float frame = static_cast<float>(ctx->fpr[1].d);
++        SetFrameObj& obj = g_setFrameObjs[ctx->gpr[3]];
++        SetFrameSite& site = g_setFrameSites[ctx->lr];
++        ++site.calls;
++        const float delta = frame - obj.lastFrame;
++        if (obj.lastGameFrame + 1 == g_gameFrame && delta > 0.0f && delta <= 4.0f) {
++            ++site.steps;
++            site.stepSum += delta;
++        }
++        obj.lastGameFrame = g_gameFrame;
++        obj.lastFrame = frame;
++        if (g_gameFrame >= g_setFrameReportAt + 300) {
++            g_setFrameReportAt = g_gameFrame;
++            std::multimap<uint32_t, uint32_t, std::greater<>> byCalls;
++            for (const auto& [lr, s] : g_setFrameSites) byCalls.emplace(s.calls, lr);
++            char line[512];
++            int len = std::snprintf(line, sizeof(line), "anim SetFrame sites (caller calls steps avgstep):");
++            int shown = 0;
++            for (const auto& [n, lr] : byCalls) {
++                if (shown++ == 8 || len >= static_cast<int>(sizeof(line)) - 40) break;
++                const SetFrameSite& s = g_setFrameSites[lr];
++                len += std::snprintf(line + len, sizeof(line) - len, " %08X %u %u %.2f", lr, s.calls, s.steps,
++                                     s.steps ? s.stepSum / s.steps : 0.0);
++            }
++            RT_LOGF("lifeking", "%s\n", line);
++            g_setFrameSites.clear();
++            if (g_setFrameObjs.size() > 4096) g_setFrameObjs.clear();
++        }
++    }
++    GuestFunctions::BaseTranslation(Address)(ctx);
++}
++} // namespace
++
++extern "C" void LifeKing_AnimSetFrame0(CpuContext* ctx) { LifeKing_AnimSetFrame<0x801B164Cu>(ctx); }
++extern "C" void LifeKing_AnimSetFrame1(CpuContext* ctx) { LifeKing_AnimSetFrame<0x801B1DDCu>(ctx); }
++extern "C" void LifeKing_AnimSetFrame2(CpuContext* ctx) { LifeKing_AnimSetFrame<0x801B2B60u>(ctx); }
++extern "C" void LifeKing_AnimSetFrame3(CpuContext* ctx) { LifeKing_AnimSetFrame<0x801B358Cu>(ctx); }
++extern "C" void LifeKing_AnimSetFrame4(CpuContext* ctx) { LifeKing_AnimSetFrame<0x801B5138u>(ctx); }
++extern "C" void LifeKing_AnimSetFrame5(CpuContext* ctx) { LifeKing_AnimSetFrame<0x801B5F5Cu>(ctx); }
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B164C, LifeKing_AnimSetFrame0);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B1DDC, LifeKing_AnimSetFrame1);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B2B60, LifeKing_AnimSetFrame2);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B358C, LifeKing_AnimSetFrame3);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B5138, LifeKing_AnimSetFrame4);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B5F5C, LifeKing_AnimSetFrame5);
 diff --git a/runtime/src/hle/os/os_interrupt.cpp b/runtime/src/hle/os/os_interrupt.cpp
 index 56f6871..7eea5ac 100644
 --- a/runtime/src/hle/os/os_interrupt.cpp
