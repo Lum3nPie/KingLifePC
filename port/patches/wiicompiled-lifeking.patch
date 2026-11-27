@@ -9418,10 +9418,10 @@ index cd236a9..e8d304e 100644
  
 diff --git a/runtime/src/lifeking_profiler.cpp b/runtime/src/lifeking_profiler.cpp
 new file mode 100644
-index 0000000..596e4ca
+index 0000000..5467b9c
 --- /dev/null
 +++ b/runtime/src/lifeking_profiler.cpp
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,226 @@
 +// LifeKing: opt-in sampling profiler. Set LIFEKING_PROFILE=1: a host thread samples, every
 +// millisecond, the instruction pointer of the main thread (where the guest fibers run) and of the
 +// threads that register themselves (GX worker, AX mix worker). A sample taken while the thread sits
@@ -9456,17 +9456,51 @@ index 0000000..596e4ca
 +
 +struct Sample {
 +    uint32_t target;
-+    uint64_t key;  // rip, or kWaitTag | kind
++    uint64_t key;     // rip, or kWaitTag | kind
++    uint64_t caller;  // rip outside the exe: first return address into the exe's code found on the stack
 +};
 +
 +bool g_active = false;
++uint64_t g_base = 0;
 +std::mutex g_mutex;
 +std::vector<Target*> g_targets;
 +std::vector<Sample> g_pending;
 +// [heavy][target] -> key -> count
 +std::map<uint64_t, uint32_t> g_counts[2][8];
++// [heavy][target] -> caller -> count, for the samples outside the exe that are not waits
++std::map<uint64_t, uint32_t> g_callers[2][8];
++uint64_t g_textBegin = 0;
++uint64_t g_textEnd = 0;
++
++void FindExeCode() {
++    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(g_base);
++    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(g_base + dos->e_lfanew);
++    const IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
++    for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
++        if ((section->Characteristics & IMAGE_SCN_MEM_EXECUTE) == 0) continue;
++        const uint64_t begin = g_base + section->VirtualAddress;
++        const uint64_t end = begin + section->Misc.VirtualSize;
++        if (g_textBegin == 0 || begin < g_textBegin) g_textBegin = begin;
++        if (end > g_textEnd) g_textEnd = end;
++    }
++}
++
++bool InExeCode(uint64_t address) { return address >= g_textBegin && address < g_textEnd; }
++
++// Stack of a suspended thread of this process: the first word pointing into the exe's code is taken
++// as the caller (a heuristic, but leaf DLL routines such as memmove sit right above it).
++uint64_t FindCaller(uint64_t rsp) {
++    if (rsp == 0 || (rsp & 7) != 0) return 0;
++    MEMORY_BASIC_INFORMATION info;
++    if (VirtualQuery(reinterpret_cast<void*>(rsp), &info, sizeof(info)) == 0 || info.State != MEM_COMMIT) return 0;
++    const uint64_t limit = reinterpret_cast<uint64_t>(info.BaseAddress) + info.RegionSize;
++    const auto* word = reinterpret_cast<const uint64_t*>(rsp);
++    for (int i = 0; i < 512 && reinterpret_cast<uint64_t>(word + 1) <= limit; ++i, ++word) {
++        if (InExeCode(*word)) return *word;
++    }
++    return 0;
++}
 +uint64_t g_frames[2] = {0, 0};
-+uint64_t g_base = 0;
 +
 +const char* WaitName(int kind) {
 +    switch (kind) {
@@ -9513,6 +9547,9 @@ index 0000000..596e4ca
 +                }
 +                std::fprintf(f, "%llx %u\n", static_cast<unsigned long long>(key - g_base), count);
 +            }
++            for (const auto& [caller, count] : g_callers[heavy][t]) {
++                std::fprintf(f, "^%llx %u\n", static_cast<unsigned long long>(caller ? caller - g_base : 0), count);
++            }
 +        }
 +    }
 +    std::fclose(f);
@@ -9541,6 +9578,7 @@ index 0000000..596e4ca
 +        if (env == nullptr || env[0] == '0') return;
 +        g_base = reinterpret_cast<uint64_t>(GetModuleHandleA(nullptr));
 +        g_active = true;
++        FindExeCode();
 +        AddTarget("main", CurrentThreadHandle());
 +        g_pending.reserve(4096);
 +        std::atexit(Dump);
@@ -9560,7 +9598,7 @@ index 0000000..596e4ca
 +                    Target* target = targets[t];
 +                    const int wait = target->waitSlot.load(std::memory_order_relaxed);
 +                    if (wait >= 0) {
-+                        local.push_back({t, kWaitTag | static_cast<uint64_t>(wait)});
++                        local.push_back({t, kWaitTag | static_cast<uint64_t>(wait), 0});
 +                        continue;
 +                    }
 +                    if (SuspendThread(target->handle) == static_cast<DWORD>(-1)) continue;
@@ -9568,8 +9606,9 @@ index 0000000..596e4ca
 +                    std::memset(&ctx, 0, sizeof(ctx));
 +                    ctx.ContextFlags = CONTEXT_CONTROL;
 +                    const bool ok = GetThreadContext(target->handle, &ctx) != FALSE;
++                    const uint64_t caller = ok && !InExeCode(ctx.Rip) ? FindCaller(ctx.Rsp) : 0;
 +                    ResumeThread(target->handle);
-+                    if (ok) local.push_back({t, ctx.Rip});
++                    if (ok) local.push_back({t, ctx.Rip, caller});
 +                }
 +                std::lock_guard<std::mutex> lock(g_mutex);
 +                g_pending.insert(g_pending.end(), local.begin(), local.end());
@@ -9596,6 +9635,7 @@ index 0000000..596e4ca
 +    ++g_frames[heavy];
 +    for (const Sample& s : g_pending) {
 +        ++g_counts[heavy][s.target][s.key];
++        if ((s.key & kWaitTag) != kWaitTag && !InExeCode(s.key)) ++g_callers[heavy][s.target][s.caller];
 +    }
 +    g_pending.clear();
 +}

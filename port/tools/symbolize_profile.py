@@ -4,7 +4,8 @@
 Usage: python symbolize_profile.py <profile.txt> <nm_output.txt> [top] [section-filter]
 nm_output.txt: `llvm-nm -C --defined-only WiiCompiled.exe` (addresses with image base 0x140000000).
 Sections are "[<thread> heavy]" / "[<thread> normal]" (heavy = frames whose busy time is >= 20 ms).
-Lines are "<rva> <count>", "@<module>+<offset> <count>" (outside the exe) or "wait:<kind> <count>".
+Lines are "<rva> <count>", "@<module>+<offset> <count>" (outside the exe), "wait:<kind> <count>"
+or "^<caller rva> <count>" (who called into DLLs, found on the stack).
 Older profiles without sections are read as one section.
 """
 import bisect
@@ -26,6 +27,7 @@ syms.sort()
 addrs = [a for a, _ in syms]
 
 sections = {}
+callers = {}
 order = []
 current = "all"
 for line in open(prof):
@@ -44,6 +46,15 @@ for line in open(prof):
         sections[current] = Counter()
         order.append(current)
     c = sections[current]
+    if key.startswith("^"):
+        rva = int(key[1:], 16)
+        if rva == 0:
+            name = "<no caller found>"
+        else:
+            i = bisect.bisect_right(addrs, rva) - 1
+            name = syms[i][1] if i >= 0 else "<?>"
+        callers.setdefault(current, Counter())[name] += n
+        continue
     if key.startswith("wait:"):
         c["<" + key + ">"] += n
     elif key.startswith("@"):
@@ -67,3 +78,7 @@ for name in order:
           f"outside the exe (not waiting) {dlls * 100.0 / max(total, 1):.1f}%")
     for sym, n in c.most_common(top):
         print(f"{n * 100.0 / total:6.2f}%  {n:7d}  {sym[:140]}")
+    if name in callers:
+        print(f"  -- callers in the exe of the time outside it (not waiting):")
+        for sym, n in callers[name].most_common(15):
+            print(f"{n * 100.0 / total:6.2f}%  {n:7d}  {sym[:140]}")
