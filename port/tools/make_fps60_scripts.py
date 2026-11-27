@@ -21,26 +21,14 @@ FRAMES = "*::CGetFPS()/30"    # frame count -> same duration
 
 # (file glob, regex, replacement, what). Each rule must match at least once, so a game update or a
 # typo shows up instead of silently doing nothing.
-# Speeds are rescaled where the scripts hand them to the engine (and back), so every script keeps
-# working in its own per-30-Hz-frame units, events with constant speeds included.
+# Only what the game's own 60 Hz support misses. Script speeds and the pad camera are left alone:
+# with the engine at 30 they looked right at 60 FPS in Liara's test (2026-11-27), so the engine moves
+# them by time, not per frame.
 RULES = [
-    ("ProgramArchlordComp_*.nut", r"::worldEngine\.setTopSpeed\(([^,()]+), (.+)\);",
-     rf"::worldEngine.setTopSpeed(\1, (\2){SPEED});", "actor top speed, script -> engine"),
-    ("ProgramArchlordComp_*.nut", r"return ::worldEngine\.(getTopSpeed|getSpeed)\(([^()]+)\);",
-     rf"return ::worldEngine.\1(\2){FRAMES};", "actor speed, engine -> script"),
-    ("ProgramArchlordComp_*.nut", r"::worldEngine\.setSpeed\(([^,()]+), ([^;]+)\);",
-     rf"::worldEngine.setSpeed(\1, (\2){SPEED});", "path-following object speed"),
     # CUpdateModels takes the microseconds since the last update; during camera events the scripts
     # pass one 30 (or 25) FPS frame instead, which at 60 FPS ran cutscenes twice as fast.
     ("ProgramArchlordComp_*.nut", r"diff = 100000/(3\.0|2\.5);",
      r"diff = 1000000.0/::CGetFPS();", "camera-event model clock (one frame)"),
-    # Camera moved by the pad (height, swing) and rolled by events, all by an amount per frame.
-    ("ProgramArchlordComp_*.nut", r"(function changeHeight\(change\)\r?\n\t\{)",
-     rf"\1 change = change{SPEED};", "camera height step"),
-    ("ProgramArchlordComp_*.nut", r"return ::worldEngine\.changeCameraSwingAngle\(_id, yAngle\);",
-     rf"return ::worldEngine.changeCameraSwingAngle(_id, (yAngle){SPEED});", "camera swing step"),
-    ("ProgramArchlordComp_*.nut", r"_twistAdd = twistByFrame;",
-     rf"_twistAdd = twistByFrame{SPEED};", "camera roll step"),
 ]
 
 

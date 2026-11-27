@@ -8433,10 +8433,10 @@ index 0000000..3840c1e
 +} // namespace TouchControls
 diff --git a/runtime/src/hle/lifeking_natives.cpp b/runtime/src/hle/lifeking_natives.cpp
 new file mode 100644
-index 0000000..2897239
+index 0000000..2a42d7a
 --- /dev/null
 +++ b/runtime/src/hle/lifeking_natives.cpp
-@@ -0,0 +1,344 @@
+@@ -0,0 +1,365 @@
 +// Natives for My Life as a King (WiiWare PAL, WFCPGD): functions of its own SDK build that need a
 +// host-side answer. Registered only while WFCPGD runs (FOREIGN_GAME_NATIVE, see hle_stubs.h).
 +
@@ -8505,11 +8505,32 @@ index 0000000..2897239
 +
 +extern "C" void LifeKing_AnimTraceFrame();
 +
++constexpr uint32_t kSystem = 0x802B1B78u;          // the engine's system object
++constexpr uint32_t kSixtyBits = 0x42700000u;       // 60.0f
++constexpr uint32_t kSystemSetFrameRate = 0x80033664u;
++
 +// Frame wait: with one retrace already gone, the game's own code waits for none more; with none, one.
++// It also keeps the engine at 60 FPS: the system object's constructor writes 30 after the video set-up
++// already chose the rate, so without this CGetFPS() stayed 30 and none of the scripts' own frame-rate
++// conversions (modFrame, the day clock, the cutscene model clock) applied.
 +extern "C" void LifeKing_FrameWait(CpuContext* ctx) {
 +    LifeKing_AnimTraceFrame();
-+    if (LifeKing60Hz() && Memory::Read32(kRetracesSinceFrame) == 0) {
-+        Memory::Write32(kRetracesSinceFrame, 1);
++    if (LifeKing60Hz()) {
++        if (Memory::Read32(kSystem + 0x10u) != kSixtyBits) {
++            RT_LOGF("lifeking", "engine frame rate was reset; setting 60 again\n");
++            const uint32_t r3 = ctx->gpr[3];
++            const uint32_t lr = ctx->lr;
++            const PPC_FPR f1 = ctx->fpr[1];
++            ctx->gpr[3] = kSystem;
++            ctx->fpr[1].d = 60.0;
++            GuestFunctions::BaseTranslation(kSystemSetFrameRate)(ctx);
++            ctx->gpr[3] = r3;
++            ctx->lr = lr;
++            ctx->fpr[1] = f1;
++        }
++        if (Memory::Read32(kRetracesSinceFrame) == 0) {
++            Memory::Write32(kRetracesSinceFrame, 1);
++        }
 +    }
 +    GuestFunctions::BaseTranslation(0x80091FC8u)(ctx);
 +}
@@ -8728,9 +8749,9 @@ index 0000000..2897239
 +    if (!LifeKingAnimTrace()) return;
 +    if (g_animFrames + 1 >= 300) {
 +        const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - g_traceStart).count();
-+        RT_LOGF("lifeking", "t=%.0fs: model clock %u calls/300 frames, us avg %.0f min %d max %d; steps halved %u full %u\n",
++        RT_LOGF("lifeking", "t=%.0fs: model clock %u calls/300 frames, us avg %.0f min %d max %d; steps halved %u full %u; engine fps bits %08X\n",
 +                t, g_modelClock.calls, g_modelClock.calls ? static_cast<double>(g_modelClock.sum) / g_modelClock.calls : 0.0,
-+                g_modelClock.calls ? g_modelClock.min : 0, g_modelClock.calls ? g_modelClock.max : 0, g_halvedSteps, g_fullSteps);
++                g_modelClock.calls ? g_modelClock.min : 0, g_modelClock.calls ? g_modelClock.max : 0, g_halvedSteps, g_fullSteps, Memory::Read32(kSystem + 0x10u));
 +        g_modelClock = ModelClock{};
 +        g_halvedSteps = g_fullSteps = 0;
 +    }
