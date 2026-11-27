@@ -64,6 +64,14 @@ No sound at first: the AI DMA natives were not placed. Named in symbols.txt by o
 ### Controls (2026-11-26)
 The runtime (HM patch) emulates a Wii Remote fed by every connected pad (through the F10 GameCube bindings), the keyboard and the mouse (pointer, left click A, right click B). For WFCPGD the remote carries a **Classic Controller** instead of the Nunchuk (`emulated_remote*.cpp`, `patch_classic.py`): GameCube view of the Xbox/DualSense pad -> Classic by position: A/B/X/Y, D-pad, left stick, right stick (C-stick), analog L/R, Z = ZR, Start = +, Z+Start = Home, Z+Y = -, Z+X = ZL. The core remote buttons are still reported too (A, B, 1, 2, +, -, D-pad).
 
+### Performance (2026-11-27)
+Symptom: frame drops when Chime appears and while a building goes up; the game is 30 FPS with logic per frame, so slow frames slow the game and (through the audio service points) the music.
+- Measuring: launcher "(mesures)" sets MKW_PERF_STATS=1 and LIFEKING_PROFILE=1. `[perf]` lines give busy ms/frame, then wall time, FPS and the waits per frame (vi pacing, GX worker, audio mix). The profiler samples the main thread, the GX worker and the AX mix worker every ms, files each sample under the frame it belongs to (heavy = busy >= 20 ms, or normal), tags waits (`wait:*`), names DLLs and finds the caller in the exe of DLL time (`^` lines). `port/tools/symbolize_profile.py` reads it. `busy` counts untagged system waits as busy, so read it with the profile.
+- The `[vi] interpolation to N FPS ... game at X FPS` line is in every log, measures or not: the guest frame rate to compare runs.
+- Finding (950 heavy frames, Liara's settings: Vulkan, resolution x5, frame interpolation 120 FPS): heavy scenes ran at 13-16 guest FPS. Game code was ~10% of the main thread; it waited 43% on the GX worker and 32% in system waits. The GX worker spent 40% in memmove (ucrtbase), plus aurora's finalize_frame_interpolation.
+- Fix: frame interpolation Off (F10 menu, `video.frame_interpolation_fps = 0`): "much smoother", music no longer slows (Liara, 2026-11-27). It records every frame and replays it for the inserted ones, all on the GX worker, which the game thread then waits for. Off is the runtime default; Liara had chosen 120.
+- Note: from Claude's shell `%LOCALAPPDATA%\WiiCompiled\Config.toml` reads as a stale copy; trust the `[runtime-config] ... loaded` line of console.log for the settings in use.
+
 ### Graphics backend (question from Liara)
 Rendering goes through aurora on Dawn (WebGPU), which already targets Direct3D 12, Vulkan and Metal: nothing is tied to D3D12. `graphics_api` in Config.toml (`auto`, `vulkan`, `d3d12`) picks it, and the F10 menu can change it for the next launch; `auto` chose D3D12 on Windows here.
 
