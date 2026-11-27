@@ -8433,10 +8433,10 @@ index 0000000..3840c1e
 +} // namespace TouchControls
 diff --git a/runtime/src/hle/lifeking_natives.cpp b/runtime/src/hle/lifeking_natives.cpp
 new file mode 100644
-index 0000000..21089cf
+index 0000000..e6147ec
 --- /dev/null
 +++ b/runtime/src/hle/lifeking_natives.cpp
-@@ -0,0 +1,444 @@
+@@ -0,0 +1,468 @@
 +// Natives for My Life as a King (WiiWare PAL, WFCPGD): functions of its own SDK build that need a
 +// host-side answer. Registered only while WFCPGD runs (FOREIGN_GAME_NATIVE, see hle_stubs.h).
 +
@@ -8881,6 +8881,30 @@ index 0000000..21089cf
 +    GuestFunctions::BaseTranslation(0x800BBBA0u)(ctx);
 +}
 +FOREIGN_GAME_WRAPPER(WFCPGD, 800BBBA0, LifeKing_EffectCalc);
++
++// --- Menu layout animations at 60 Hz ------------------------------------------------------------------
++// A menu animation (script MenuAnime, native object with the speed at +0xC and its nw4r::lyt
++// animation at +0x8) moves its frame (+0x10 of the lyt animation) by the speed each update
++// (0x800CB040, called once per game frame). At 60 Hz the update runs with half the speed.
++extern "C" void LifeKing_MenuAnimeUpdate(CpuContext* ctx) {
++    if (!LifeKing60Hz()) {
++        GuestFunctions::BaseTranslation(0x800CB040u)(ctx);
++        return;
++    }
++    const uint32_t anime = ctx->gpr[3];
++    const uint32_t speedBits = Memory::Read32(anime + 0xCu);
++    float speed;
++    std::memcpy(&speed, &speedBits, sizeof(speed));
++    const float half = speed * 0.5f;
++    uint32_t halfBits;
++    std::memcpy(&halfBits, &half, sizeof(halfBits));
++    Memory::Write32(anime + 0xCu, halfBits);
++    GuestFunctions::BaseTranslation(0x800CB040u)(ctx);
++    if (Memory::Read32(anime + 0xCu) == halfBits) {
++        Memory::Write32(anime + 0xCu, speedBits);
++    }
++}
++FOREIGN_GAME_WRAPPER(WFCPGD, 800CB040, LifeKing_MenuAnimeUpdate);
 diff --git a/runtime/src/hle/os/os_interrupt.cpp b/runtime/src/hle/os/os_interrupt.cpp
 index 56f6871..7eea5ac 100644
 --- a/runtime/src/hle/os/os_interrupt.cpp
