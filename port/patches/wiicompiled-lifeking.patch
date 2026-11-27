@@ -1284,6 +1284,71 @@ index e3ba175..46585bb 100644
 +    static AbiTrampoline<decltype(name)> MKW_DETAIL_MAKE_UNIQUE(_abi_foreign_wrapper_, __COUNTER__)( \
 +        ::GuestRegion::ForeignGameAddress(#game_id, 0x##addr_hex##u), #name, name, FunctionKind::Native, \
 +        false, kPpcAllNonvolatileFprMask, 0, 0, &AbiRawCpuThunk<&name>::Invoke)
+diff --git a/runtime/include/perf_stats.h b/runtime/include/perf_stats.h
+index 4152ec0..cc9a849 100644
+--- a/runtime/include/perf_stats.h
++++ b/runtime/include/perf_stats.h
+@@ -1,28 +1,56 @@
+ #pragma once
+ 
++#include <atomic>
+ #include <chrono>
+ 
+ // MKW_PERF_STATS=1: logs the game thread's busy time per presented frame, i.e. wall time minus the
+-// time it spends blocked on VI pacing, the GX worker or the audio mixer.
++// time it spends blocked on VI pacing, the GX worker or the audio mixer, with each kind of wait and
++// the wall time per frame alongside.
+ namespace PerfStats {
+ 
++enum class WaitKind : int { Vi = 0, Gx = 1, Audio = 2, Idle = 3, Count = 4 };
++
+ bool Enabled() noexcept;
+-void AddWait(std::chrono::steady_clock::duration wait) noexcept;
++void AddWait(WaitKind kind, std::chrono::steady_clock::duration wait) noexcept;
+ void OnFramePresented() noexcept;
+ 
++// LIFEKING_PROFILE: the sampling profiler gives each sampled thread a slot telling whether (and on
++// what) that thread is waiting, so a sample taken in a wait is filed as such and not as driver time.
++extern thread_local std::atomic<int>* t_profileWaitSlot;
++
+ class WaitScope {
+ public:
+-    WaitScope() noexcept : m_start(Enabled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}) {}
++    explicit WaitScope(WaitKind kind = WaitKind::Gx) noexcept
++        : m_kind(kind), m_start(Enabled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}) {
++        if (t_profileWaitSlot != nullptr) {
++            m_prevSlot = t_profileWaitSlot->exchange(static_cast<int>(kind), std::memory_order_relaxed);
++        }
++    }
+     ~WaitScope() {
++        if (t_profileWaitSlot != nullptr) {
++            t_profileWaitSlot->store(m_prevSlot, std::memory_order_relaxed);
++        }
+         if (m_start != std::chrono::steady_clock::time_point{}) {
+-            AddWait(std::chrono::steady_clock::now() - m_start);
++            AddWait(m_kind, std::chrono::steady_clock::now() - m_start);
+         }
+     }
+     WaitScope(const WaitScope&) = delete;
+     WaitScope& operator=(const WaitScope&) = delete;
+ 
+ private:
++    WaitKind m_kind;
++    int m_prevSlot = -1;
+     std::chrono::steady_clock::time_point m_start;
+ };
+ 
+ } // namespace PerfStats
++
++// LIFEKING_PROFILE=1 (lifeking_profiler.cpp).
++namespace LifeKingProfiler {
++bool Active() noexcept;
++// Adds the calling thread to the sampled threads (the main thread is added at start-up).
++void RegisterCurrentThread(const char* name) noexcept;
++// Called once per presented frame on the main thread: files the samples taken since the previous
++// frame under "heavy" or "normal" depending on that frame's busy time.
++void OnFrame(double busyMs) noexcept;
++} // namespace LifeKingProfiler
 diff --git a/runtime/include/runtime_config.h b/runtime/include/runtime_config.h
 index ea5a12b..69c9a7e 100644
 --- a/runtime/include/runtime_config.h
@@ -1891,6 +1956,30 @@ index ade28b5..70c80e7 100644
  
  // AXFX_REVERBSTD_EXP field offsets (byte offsets into the struct in r4).
  constexpr uint32_t kFieldPreDelayCoef = 0x18;
+diff --git a/runtime/src/hle/audio/ax_mix.cpp b/runtime/src/hle/audio/ax_mix.cpp
+index f95550c..69748f1 100644
+--- a/runtime/src/hle/audio/ax_mix.cpp
++++ b/runtime/src/hle/audio/ax_mix.cpp
+@@ -123,7 +123,7 @@ public:
+ 
+     void JoinMix() {
+         if (m_mixThread.joinable()) {
+-            PerfStats::WaitScope wait;
++            PerfStats::WaitScope wait{PerfStats::WaitKind::Audio};
+             std::unique_lock<std::mutex> lock(m_mixMutex);
+             m_mixIdle.wait(lock, [this] { return !m_mixPending && !m_mixBusy; });
+         }
+@@ -1369,8 +1369,10 @@ private:
+ 
+     void MixWorkerMain() {
+         t_onMixWorker = true;
++        LifeKingProfiler::RegisterCurrentThread("ax-mix");
+         for (;;) {
+             {
++                PerfStats::WaitScope idle{PerfStats::WaitKind::Idle};
+                 std::unique_lock<std::mutex> lock(m_mixMutex);
+                 m_mixWake.wait(lock, [this] { return m_mixStop || m_mixPending; });
+                 if (!m_mixPending) {
 diff --git a/runtime/src/hle/bluetooth/bt_usb_device.cpp b/runtime/src/hle/bluetooth/bt_usb_device.cpp
 index eab7934..7b04834 100644
 --- a/runtime/src/hle/bluetooth/bt_usb_device.cpp
@@ -7775,6 +7864,31 @@ index 3a8c43b..1df0c2c 100644
      ApplyAuroraVtxStateForBegin(static_cast<GXVtxFmt>(vf));
      g_hleGxState.currentVtxFmt=(GXVtxFmt)vf; g_hleGxState.currentPrim=(GXPrimitive)t;
      g_hleGxState.vertsRemaining=nv; g_hleGxState.inBegin=nv!=0; g_hleGxState.auroraBeginCalled=false;
+diff --git a/runtime/src/hle/gx/gx_worker.cpp b/runtime/src/hle/gx/gx_worker.cpp
+index ac8983e..9f64a86 100644
+--- a/runtime/src/hle/gx/gx_worker.cpp
++++ b/runtime/src/hle/gx/gx_worker.cpp
+@@ -188,10 +188,12 @@ void WorkerMain() {
+ #if defined(_WIN32)
+     SetThreadDescription(GetCurrentThread(), L"GX worker");
+ #endif
++    LifeKingProfiler::RegisterCurrentThread("gx-worker");
+     uint64_t tail = g_tail.load(std::memory_order_relaxed);
+     for (;;) {
+         uint64_t head = g_head.load(std::memory_order_acquire);
+         if (head == tail) {
++            PerfStats::WaitScope idle{PerfStats::WaitKind::Idle};
+             const auto spinUntil = std::chrono::steady_clock::now() + kIdleSpin;
+             while (head == tail) {
+                 for (int spin = 0; spin < 64 && head == tail; ++spin) {
+@@ -208,6 +210,7 @@ void WorkerMain() {
+                 return;
+             }
+             {
++                PerfStats::WaitScope idle{PerfStats::WaitKind::Idle};
+                 std::unique_lock lock{g_headMutex};
+                 g_consumerWaiting.store(true, std::memory_order_seq_cst);
+                 while (g_head.load(std::memory_order_seq_cst) == tail && !g_stop.load(std::memory_order_acquire)) {
 diff --git a/runtime/src/hle/input/touch_controls.cpp b/runtime/src/hle/input/touch_controls.cpp
 new file mode 100644
 index 0000000..ae75169
@@ -8827,7 +8941,7 @@ index 00659d0..ad2c6cf 100644
  }
  
 diff --git a/runtime/src/hle/vi.cpp b/runtime/src/hle/vi.cpp
-index cd236a9..5831036 100644
+index cd236a9..e8d304e 100644
 --- a/runtime/src/hle/vi.cpp
 +++ b/runtime/src/hle/vi.cpp
 @@ -9,6 +9,11 @@
@@ -8867,6 +8981,15 @@ index cd236a9..5831036 100644
  
  std::chrono::microseconds IntervalForFormat(uint32_t tvFormat) {
      // NTSC-ish defaults to 60 Hz; PAL uses 50 Hz.
+@@ -162,7 +169,7 @@ constexpr std::chrono::microseconds kFinalSpinWindow{500};
+ 
+ void SleepPreciselyUntil(Clock::time_point deadline, bool finishWithSpin = false,
+                          std::chrono::microseconds spinWindow = 750us) {
+-    PerfStats::WaitScope wait;
++    PerfStats::WaitScope wait{PerfStats::WaitKind::Vi};
+     const auto now = Clock::now();
+     if (now >= deadline) {
+         return;
 @@ -213,6 +220,126 @@ void SleepPreciselyUntil(Clock::time_point deadline, bool finishWithSpin = false
      }
  }
@@ -9295,31 +9418,65 @@ index cd236a9..5831036 100644
  
 diff --git a/runtime/src/lifeking_profiler.cpp b/runtime/src/lifeking_profiler.cpp
 new file mode 100644
-index 0000000..9dcb105
+index 0000000..596e4ca
 --- /dev/null
 +++ b/runtime/src/lifeking_profiler.cpp
-@@ -0,0 +1,67 @@
-+// LifeKing: opt-in sampling profiler. Set LIFEKING_PROFILE=1: a host thread samples the main
-+// thread's instruction pointer every millisecond and, at exit, writes the counts per address to
-+// %TEMP%\lifeking_profile.txt (map them to functions with llvm-nm on WiiCompiled.exe).
+@@ -0,0 +1,186 @@
++// LifeKing: opt-in sampling profiler. Set LIFEKING_PROFILE=1: a host thread samples, every
++// millisecond, the instruction pointer of the main thread (where the guest fibers run) and of the
++// threads that register themselves (GX worker, AX mix worker). A sample taken while the thread sits
++// in a PerfStats::WaitScope is filed under that wait instead of its address. Samples are grouped per
++// presented frame: frames whose busy time reaches kHeavyMs go to the "heavy" sections, the others to
++// "normal". %TEMP%\lifeking_profile.txt is rewritten every ~5 s and at exit; samples outside the exe
++// are written as @module+offset. port/lk-tools/symbolize_profile.py turns it into function names.
++#include "perf_stats.h"
++
 +#if defined(_WIN32)
 +#include <windows.h>
 +
-+#include <atomic>
 +#include <cstdio>
 +#include <cstdlib>
 +#include <cstring>
 +#include <map>
 +#include <mutex>
++#include <string>
 +#include <thread>
++#include <vector>
 +
 +namespace {
 +
-+std::atomic<bool> g_running{false};
++constexpr double kHeavyMs = 20.0;
++constexpr uint64_t kWaitTag = 0xFFFF000000000000ull;
++
++struct Target {
++    std::string name;
++    HANDLE handle = nullptr;
++    std::atomic<int> waitSlot{-1};
++};
++
++struct Sample {
++    uint32_t target;
++    uint64_t key;  // rip, or kWaitTag | kind
++};
++
++bool g_active = false;
 +std::mutex g_mutex;
-+std::map<uint64_t, uint32_t> g_counts;
-+HANDLE g_target = nullptr;
++std::vector<Target*> g_targets;
++std::vector<Sample> g_pending;
++// [heavy][target] -> key -> count
++std::map<uint64_t, uint32_t> g_counts[2][8];
++uint64_t g_frames[2] = {0, 0};
 +uint64_t g_base = 0;
++
++const char* WaitName(int kind) {
++    switch (kind) {
++    case 0: return "wait:vi-pacing";
++    case 1: return "wait:gx-worker";
++    case 2: return "wait:audio-mix";
++    case 3: return "wait:idle";
++    default: return "wait:?";
++    }
++}
 +
 +void Dump() {
 +    char path[MAX_PATH];
@@ -9330,10 +9487,52 @@ index 0000000..9dcb105
 +    if (!f) return;
 +    std::lock_guard<std::mutex> lock(g_mutex);
 +    std::fprintf(f, "# image base 0x%llx\n", static_cast<unsigned long long>(g_base));
-+    for (const auto& [rip, count] : g_counts) {
-+        std::fprintf(f, "%llx %u\n", static_cast<unsigned long long>(rip - g_base), count);
++    std::fprintf(f, "# frames heavy %llu normal %llu (heavy = busy >= %.0f ms)\n",
++                 static_cast<unsigned long long>(g_frames[1]), static_cast<unsigned long long>(g_frames[0]), kHeavyMs);
++    for (int heavy = 1; heavy >= 0; --heavy) {
++        for (size_t t = 0; t < g_targets.size(); ++t) {
++            std::fprintf(f, "[%s %s]\n", g_targets[t]->name.c_str(), heavy ? "heavy" : "normal");
++            for (const auto& [key, count] : g_counts[heavy][t]) {
++                if ((key & kWaitTag) == kWaitTag) {
++                    std::fprintf(f, "%s %u\n", WaitName(static_cast<int>(key & 0xFF)), count);
++                    continue;
++                }
++                HMODULE module = nullptr;
++                if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
++                                       reinterpret_cast<LPCSTR>(key), &module) &&
++                    module != nullptr && reinterpret_cast<uint64_t>(module) != g_base) {
++                    char modPath[MAX_PATH];
++                    const DWORD len = GetModuleFileNameA(module, modPath, MAX_PATH);
++                    const char* base = modPath;
++                    for (DWORD i = 0; i < len; ++i) {
++                        if (modPath[i] == '\\' || modPath[i] == '/') base = modPath + i + 1;
++                    }
++                    std::fprintf(f, "@%s+%llx %u\n", len ? base : "?",
++                                 static_cast<unsigned long long>(key - reinterpret_cast<uint64_t>(module)), count);
++                    continue;
++                }
++                std::fprintf(f, "%llx %u\n", static_cast<unsigned long long>(key - g_base), count);
++            }
++        }
 +    }
 +    std::fclose(f);
++}
++
++void AddTarget(const char* name, HANDLE handle) {
++    auto* target = new Target;
++    target->name = name;
++    target->handle = handle;
++    PerfStats::t_profileWaitSlot = &target->waitSlot;
++    std::lock_guard<std::mutex> lock(g_mutex);
++    if (g_targets.size() >= 8) return;
++    g_targets.push_back(target);
++}
++
++HANDLE CurrentThreadHandle() {
++    HANDLE handle = nullptr;
++    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &handle,
++                    THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, 0);
++    return handle;
 +}
 +
 +struct Starter {
@@ -9341,30 +9540,73 @@ index 0000000..9dcb105
 +        const char* env = std::getenv("LIFEKING_PROFILE");
 +        if (env == nullptr || env[0] == '0') return;
 +        g_base = reinterpret_cast<uint64_t>(GetModuleHandleA(nullptr));
-+        DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &g_target,
-+                        THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, 0);
-+        g_running = true;
++        g_active = true;
++        AddTarget("main", CurrentThreadHandle());
++        g_pending.reserve(4096);
 +        std::atexit(Dump);
 +        std::thread([] {
 +            unsigned ticks = 0;
-+            while (g_running) {
++            std::vector<Sample> local;
++            for (;;) {
 +                Sleep(1);
 +                if (++ticks % 5000 == 0) Dump();  // also written while running: the window may be killed
-+                if (SuspendThread(g_target) == static_cast<DWORD>(-1)) continue;
-+                CONTEXT ctx;
-+                std::memset(&ctx, 0, sizeof(ctx));
-+                ctx.ContextFlags = CONTEXT_CONTROL;
-+                if (GetThreadContext(g_target, &ctx)) {
++                std::vector<Target*> targets;
++                {
 +                    std::lock_guard<std::mutex> lock(g_mutex);
-+                    ++g_counts[ctx.Rip];
++                    targets = g_targets;
 +                }
-+                ResumeThread(g_target);
++                local.clear();
++                for (uint32_t t = 0; t < targets.size(); ++t) {
++                    Target* target = targets[t];
++                    const int wait = target->waitSlot.load(std::memory_order_relaxed);
++                    if (wait >= 0) {
++                        local.push_back({t, kWaitTag | static_cast<uint64_t>(wait)});
++                        continue;
++                    }
++                    if (SuspendThread(target->handle) == static_cast<DWORD>(-1)) continue;
++                    CONTEXT ctx;
++                    std::memset(&ctx, 0, sizeof(ctx));
++                    ctx.ContextFlags = CONTEXT_CONTROL;
++                    const bool ok = GetThreadContext(target->handle, &ctx) != FALSE;
++                    ResumeThread(target->handle);
++                    if (ok) local.push_back({t, ctx.Rip});
++                }
++                std::lock_guard<std::mutex> lock(g_mutex);
++                g_pending.insert(g_pending.end(), local.begin(), local.end());
++                if (g_pending.size() > 200000) g_pending.clear();  // no frames presented (loading)
 +            }
 +        }).detach();
 +    }
 +} g_starter;
 +
 +} // namespace
++
++namespace LifeKingProfiler {
++bool Active() noexcept { return g_active; }
++
++void RegisterCurrentThread(const char* name) noexcept {
++    if (!g_active) return;
++    AddTarget(name, CurrentThreadHandle());
++}
++
++void OnFrame(double busyMs) noexcept {
++    if (!g_active) return;
++    const int heavy = busyMs >= kHeavyMs ? 1 : 0;
++    std::lock_guard<std::mutex> lock(g_mutex);
++    ++g_frames[heavy];
++    for (const Sample& s : g_pending) {
++        ++g_counts[heavy][s.target][s.key];
++    }
++    g_pending.clear();
++}
++} // namespace LifeKingProfiler
++
++#else
++namespace LifeKingProfiler {
++bool Active() noexcept { return false; }
++void RegisterCurrentThread(const char*) noexcept {}
++void OnFrame(double) noexcept {}
++} // namespace LifeKingProfiler
 +#endif
 diff --git a/runtime/src/main.cpp b/runtime/src/main.cpp
 index 56bec9f..ab43f13 100644
@@ -9588,6 +9830,101 @@ index ad031c1..4aff5ae 100644
      // The process owns this monitor for its remaining lifetime. Keeping it
      // detached avoids shutdown ordering between WinRT and static audio state.
      std::thread(MonitorWindowsMediaSessions).detach();
+diff --git a/runtime/src/perf_stats.cpp b/runtime/src/perf_stats.cpp
+index ee09b0c..f2f0e0d 100644
+--- a/runtime/src/perf_stats.cpp
++++ b/runtime/src/perf_stats.cpp
+@@ -8,22 +8,30 @@
+ #include <cstring>
+ 
+ namespace PerfStats {
++
++thread_local std::atomic<int>* t_profileWaitSlot = nullptr;
++
+ namespace {
+ 
+ using Clock = std::chrono::steady_clock;
+ 
+ constexpr size_t kWindow = 240;
++constexpr size_t kKinds = static_cast<size_t>(WaitKind::Count);
+ 
+-thread_local Clock::duration t_wait{};
++thread_local std::array<Clock::duration, kKinds> t_wait{};
+ 
+ struct FrameWindow {
+     Clock::time_point last{};
+     std::array<double, kWindow> busyMs{};
++    std::array<double, kWindow> wallMs{};
++    std::array<double, kKinds> waitMs{};
+     size_t count = 0;
+ };
+ 
+ FrameWindow g_window;
+ 
++double Ms(Clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); }
++
+ } // namespace
+ 
+ bool Enabled() noexcept {
+@@ -34,22 +42,33 @@ bool Enabled() noexcept {
+     return enabled;
+ }
+ 
+-void AddWait(Clock::duration wait) noexcept { t_wait += wait; }
++void AddWait(WaitKind kind, Clock::duration wait) noexcept { t_wait[static_cast<size_t>(kind)] += wait; }
+ 
+ void OnFramePresented() noexcept {
+     if (!Enabled()) {
+         return;
+     }
+     const auto now = Clock::now();
+-    const Clock::duration wait = t_wait;
+-    t_wait = {};
++    Clock::duration wait{};
++    std::array<double, kKinds> waitMs{};
++    for (size_t k = 0; k < kKinds; ++k) {
++        wait += t_wait[k];
++        waitMs[k] = Ms(t_wait[k]);
++        t_wait[k] = {};
++    }
+     if (g_window.last == Clock::time_point{}) {
+         g_window.last = now;
+         return;
+     }
+-    const auto busy = (now - g_window.last) - wait;
++    const auto wall = now - g_window.last;
++    const double busyMs = Ms(wall - wait);
+     g_window.last = now;
+-    g_window.busyMs[g_window.count++] = std::chrono::duration<double, std::milli>(busy).count();
++    LifeKingProfiler::OnFrame(busyMs);
++    g_window.wallMs[g_window.count] = Ms(wall);
++    g_window.busyMs[g_window.count++] = busyMs;
++    for (size_t k = 0; k < kKinds; ++k) {
++        g_window.waitMs[k] += waitMs[k];
++    }
+     if (g_window.count < kWindow) {
+         return;
+     }
+@@ -59,9 +78,19 @@ void OnFramePresented() noexcept {
+     for (const double ms : sorted) {
+         sum += ms;
+     }
++    double wallSum = 0;
++    size_t late = 0;
++    for (const double ms : g_window.wallMs) {
++        wallSum += ms;
++        late += ms > 34.0 ? 1 : 0;
++    }
+     RT_LOGF("perf", "busy ms/frame over %zu frames: avg %.3f median %.3f p95 %.3f max %.3f\n", kWindow,
+             sum / kWindow, sorted[kWindow / 2], sorted[kWindow * 95 / 100], sorted[kWindow - 1]);
++    RT_LOGF("perf", "  wall avg %.3f ms (%.1f fps), %zu frames over 34 ms; waits/frame: vi %.3f gx %.3f audio %.3f\n",
++            wallSum / kWindow, 1000.0 * kWindow / std::max(wallSum, 1.0), late,
++            g_window.waitMs[0] / kWindow, g_window.waitMs[1] / kWindow, g_window.waitMs[2] / kWindow);
+     g_window.count = 0;
++    g_window.waitMs = {};
+ }
+ 
+ } // namespace PerfStats
 diff --git a/runtime/src/platform/android_disc.cpp b/runtime/src/platform/android_disc.cpp
 new file mode 100644
 index 0000000..478973a
