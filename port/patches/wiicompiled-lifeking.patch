@@ -9003,21 +9003,22 @@ index ef9caac..b5dd2dc 100644
  } // anonymous namespace
  
 diff --git a/runtime/src/hle/storage/nand_isfs.cpp b/runtime/src/hle/storage/nand_isfs.cpp
-index 6111b20..96f48f1 100644
+index 6111b20..ec1c088 100644
 --- a/runtime/src/hle/storage/nand_isfs.cpp
 +++ b/runtime/src/hle/storage/nand_isfs.cpp
-@@ -6,6 +6,10 @@
+@@ -6,6 +6,11 @@
  
  #include "discord_presence.h"
  #include "runtime_log.h"
 +#include "runtime_config.h"
 +#include <cstdio>
++#include <cstdlib>
 +#include <filesystem>
 +#include <mutex>
  
  extern "C" void OSSleepThread_HLE_801aa9b8(CpuContext* ctx);
  
-@@ -64,6 +68,54 @@ static constexpr uint32_t ES_IOCTL_GETDEVICEID = 0x07;
+@@ -64,6 +69,64 @@ static constexpr uint32_t ES_IOCTL_GETDEVICEID = 0x07;
  static constexpr uint32_t ES_IOCTL_GETDEVICECERT = 0x1E;
  static constexpr uint32_t ES_IOCTL_GETTITLEID = 0x20;
  static constexpr uint32_t ES_IOCTL_SIGN = 0x30;
@@ -9041,7 +9042,17 @@ index 6111b20..96f48f1 100644
 +    const std::filesystem::path root = RuntimeConfigFile::ResolvedDvdRoot();
 +    char name[32];
 +    std::snprintf(name, sizeof(name), "%08x.app", index);
-+    const std::filesystem::path path = root.parent_path() / "content" / name;
++    std::filesystem::path path = root.parent_path() / "content" / name;
++    // LifeKing: LIFEKING_OVERLAY_ROOT/content/<index>.app, when present, replaces the content (the
++    // 60 FPS launcher's patched data archive, made by port/lk-tools/make_fps60_scripts.py).
++    if (const char* overlay = std::getenv("LIFEKING_OVERLAY_ROOT"); overlay != nullptr && *overlay) {
++        std::error_code ec;
++        const std::filesystem::path patched = RuntimeConfigFile::PathFromUtf8(overlay) / "content" / name;
++        if (std::filesystem::is_regular_file(patched, ec)) {
++            path = patched;
++            RT_LOGF("lifeking", "content %u from %s\n", index, path.string().c_str());
++        }
++    }
 +    std::FILE* f = nullptr;
 +#if defined(_WIN32)
 +    f = _wfopen(path.wstring().c_str(), L"rb");
@@ -9072,7 +9083,7 @@ index 6111b20..96f48f1 100644
  static constexpr uint32_t DOLPHIN_IOCTL_GET_ELAPSED_TIME = 0x01;
  static constexpr uint32_t DOLPHIN_IOCTL_GET_VERSION = 0x02;
  static constexpr uint32_t DOLPHIN_IOCTL_GET_SPEED_LIMIT = 0x03;
-@@ -110,7 +162,7 @@ static IosVector ReadIosVector(uint32_t vectorPtr, uint32_t index) {
+@@ -110,7 +173,7 @@ static IosVector ReadIosVector(uint32_t vectorPtr, uint32_t index) {
  
  static uint64_t CurrentMkwTitleId() {
      uint32_t low = CurrentMkwTitleIdLo();
@@ -9081,7 +9092,7 @@ index 6111b20..96f48f1 100644
  }
  
  static bool WriteGuestBytes(uint32_t address, uint32_t size, const uint8_t* data, size_t dataSize) {
-@@ -871,7 +923,7 @@ int32_t ISFS_OpenLib_Initialize(CpuContext* ctx) {
+@@ -871,7 +934,7 @@ int32_t ISFS_OpenLib_Initialize(CpuContext* ctx) {
      
      // Create the title data directory if it doesn't exist
      char titleId[32];
@@ -9090,7 +9101,7 @@ index 6111b20..96f48f1 100644
      char gameId[32];
      std::snprintf(gameId, sizeof(gameId), "%08x", CurrentMkwTitleIdLo());
      CreateDirectoryPath(GetNandBasePath() / "title" / titleId / gameId / "data");
-@@ -1017,6 +1069,46 @@ static int32_t HandleIsfsReadDir(uint32_t numIn, uint32_t numOut, uint32_t vecto
+@@ -1017,6 +1080,46 @@ static int32_t HandleIsfsReadDir(uint32_t numIn, uint32_t numOut, uint32_t vecto
      return ISFS_OK;
  }
  
@@ -9137,7 +9148,7 @@ index 6111b20..96f48f1 100644
  extern "C" int32_t NAND_IOS_Ioctlv_HLE(
      uint32_t fd,
      uint32_t cmd,
-@@ -1047,6 +1139,9 @@ extern "C" int32_t NAND_IOS_Ioctlv_HLE(
+@@ -1047,6 +1150,9 @@ extern "C" int32_t NAND_IOS_Ioctlv_HLE(
          if (cmd == ISFS_IOCTL_READDIR) {
              return HandleIsfsReadDir(numIn, numOut, vectorPtr);
          }
@@ -9147,7 +9158,7 @@ index 6111b20..96f48f1 100644
          return ISFS_OK;
      }
  
-@@ -1116,6 +1211,94 @@ extern "C" int32_t NAND_IOS_Ioctlv_HLE(
+@@ -1116,6 +1222,94 @@ extern "C" int32_t NAND_IOS_Ioctlv_HLE(
                  return ISFS_OK;
              }
  
