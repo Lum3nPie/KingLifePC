@@ -1,4 +1,4 @@
-# My Life as a King: PC port (v0.1)
+# KingLife: My Life as a King PC port (v0.2)
 
 A native Windows build of *My Life as a King* (WiiWare, PAL, `WFCP`), made by **static
 recompilation**: the game's PowerPC code is translated to C++ by
@@ -16,7 +16,7 @@ reuses the foreign-game patches of
 [HarvestMoonAnimalParadeRecomp](https://github.com/RodoLy/HarvestMoonAnimalParadeRecomp) (GPL-3.0).
 The decompilation in the rest of this repository keeps its own licence.
 
-## What works (v0.1)
+## What works (v0.2)
 
 - Boots to the title screen, new game, prologue and play.
 - Controls: any pad (Xbox Series, DualSense...) through SDL, keyboard, mouse as the pointer. The
@@ -24,9 +24,14 @@ The decompilation in the rest of this repository keeps its own licence.
   analog L/R, Z = ZR, Start = +, Z+Start = Home, Z+Y = -, Z+X = ZL. F10 opens the settings
   (bindings, graphics API, resolution...).
 - Sound, 16:9 picture stretched to the window.
+- **Native 60 FPS** (new in v0.2): the game logic runs at 60 Hz with game, animations, cutscenes,
+  effects, menus and music at their normal speed, without frame interpolation. `LIFEKING_FPS=30`
+  gives the original 30 FPS. The 60 FPS mode needs a patched copy of the data archive, which
+  `build.ps1` makes from your own content 2 into `port/lifeking-mod60` (see `docs/NOTES.md`).
+- The app is called **KingLife** (`KingLife.exe`, blue crystal icon drawn by `tools/make_icon.py`).
 
-Known: frame rate drops (as on the Wii) when Chime appears or a building is built, and the music
-slows down with them.
+Tip: leave F10's frame interpolation Off. It costs a lot on the render thread, and since the game's
+logic is tied to its frames, it slowed the game and the music in heavy scenes (Chime, buildings).
 
 ## Building
 
@@ -70,10 +75,10 @@ port/
    ```
    and create `DATA/sys/boot.bin` (0x440 bytes starting with `WFCPGD`), `DATA/sys/bi2.bin` and a
    minimal `DATA/sys/fst.bin` (see `docs/NOTES.md`).
-4. Build: `pwsh port/tools/build.ps1` (writes the layer, translates, builds `WiiCompiled.exe` in
-   `port/Wiicompiled/build/lifeking-native`).
+4. Build: `pwsh port/tools/build.ps1` (writes the layer, translates, builds `KingLife.exe` in
+   `port/Wiicompiled/build/lifeking-native`, then the 60 FPS data patch).
 
-Run `WiiCompiled.exe` from its folder. The game data folder is found next to the build; it can also
+Run `KingLife.exe` from its folder (`set LIFEKING_FPS=30` first for 30 FPS). The game data folder is found next to the build; it can also
 be set in `%LOCALAPPDATA%\WiiCompiled\Config.toml` (`[paths] dvd_root`).
 
 ## How it was made

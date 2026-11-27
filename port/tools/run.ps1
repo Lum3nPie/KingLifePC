@@ -7,7 +7,7 @@ if (-not $NoBuild) {
 }
 $exeDir = Join-Path $tools '..\Wiicompiled\build\lifeking-native' | Resolve-Path
 $out = Join-Path $tools '..\run.out'; $err = Join-Path $tools '..\run.err'
-$p = Start-Process -FilePath (Join-Path $exeDir 'WiiCompiled.exe') -WorkingDirectory $exeDir -PassThru `
+$p = Start-Process -FilePath (Join-Path $exeDir 'KingLife.exe') -WorkingDirectory $exeDir -PassThru `
     -RedirectStandardOutput $out -RedirectStandardError $err
 $deadline = (Get-Date).AddSeconds($Seconds)
 while (-not $p.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }

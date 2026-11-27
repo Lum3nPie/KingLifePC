@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
 $tools = $PSScriptRoot
 $wc = Join-Path $tools '..\Wiicompiled' | Resolve-Path
-$symbols = Join-Path $tools '..\..\config\WFCPGD\symbols.txt' | Resolve-Path
+$symbols = Join-Path $tools '..\..\KingLifePC\config\WFCPGD\symbols.txt' | Resolve-Path
 
 python -I (Join-Path $tools 'make_layer.py') --wiicompiled $wc --symbols $symbols
 if ($LASTEXITCODE) { throw 'make_layer failed' }
@@ -33,7 +33,14 @@ try {
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release *> ..\cmake.log
         if ($LASTEXITCODE) { throw 'cmake failed (see port/cmake.log)' }
     }
-    ninja -C build/lifeking-native WiiCompiled.exe *> ..\build.log
+    ninja -C build/lifeking-native WiiCompiled *> ..\build.log
     if ($LASTEXITCODE) { throw 'ninja failed (see port/build.log)' }
+    # The exe is KingLife.exe since v0.2; drop the pre-0.2 name so nothing starts a stale build.
+    Remove-Item -ErrorAction SilentlyContinue build/lifeking-native/WiiCompiled.exe
+    # 60 FPS data patch (port/lifeking-mod60, made from the local game files; never in git).
+    if (Test-Path (Join-Path $tools '..\lifeking-data\content\00000002.app')) {
+        python -I (Join-Path $tools 'make_fps60_scripts.py') | Out-Null
+        if ($LASTEXITCODE) { throw 'make_fps60_scripts failed' }
+    }
     'build ok'
 } finally { Pop-Location }
