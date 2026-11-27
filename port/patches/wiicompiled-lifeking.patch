@@ -8433,10 +8433,10 @@ index 0000000..3840c1e
 +} // namespace TouchControls
 diff --git a/runtime/src/hle/lifeking_natives.cpp b/runtime/src/hle/lifeking_natives.cpp
 new file mode 100644
-index 0000000..8c5b0de
+index 0000000..21089cf
 --- /dev/null
 +++ b/runtime/src/hle/lifeking_natives.cpp
-@@ -0,0 +1,431 @@
+@@ -0,0 +1,444 @@
 +// Natives for My Life as a King (WiiWare PAL, WFCPGD): functions of its own SDK build that need a
 +// host-side answer. Registered only while WFCPGD runs (FOREIGN_GAME_NATIVE, see hle_stubs.h).
 +
@@ -8868,6 +8868,19 @@ index 0000000..8c5b0de
 +FOREIGN_GAME_WRAPPER(WFCPGD, 801B358C, LifeKing_AnimSetFrame3);
 +FOREIGN_GAME_WRAPPER(WFCPGD, 801B5138, LifeKing_AnimSetFrame4);
 +FOREIGN_GAME_WRAPPER(WFCPGD, 801B5F5C, LifeKing_AnimSetFrame5);
++
++// --- Particle effects at 60 Hz ------------------------------------------------------------------------
++// The effect manager (system object +0x6AA8) steps every nw4r::ef effect by one 30 Hz frame per call
++// (0x800BBBA0, called once per game frame by System::Update 0x80032D18; scripts pre-warm with their own
++// calcFrame). At 60 Hz it runs on every other frame only, so smoke, dust and sparkles keep their speed;
++// they are still drawn every frame.
++extern "C" void LifeKing_EffectCalc(CpuContext* ctx) {
++    if (LifeKing60Hz() && (g_gameFrame & 1u) != 0) {
++        return;
++    }
++    GuestFunctions::BaseTranslation(0x800BBBA0u)(ctx);
++}
++FOREIGN_GAME_WRAPPER(WFCPGD, 800BBBA0, LifeKing_EffectCalc);
 diff --git a/runtime/src/hle/os/os_interrupt.cpp b/runtime/src/hle/os/os_interrupt.cpp
 index 56f6871..7eea5ac 100644
 --- a/runtime/src/hle/os/os_interrupt.cpp
