@@ -8433,10 +8433,10 @@ index 0000000..3840c1e
 +} // namespace TouchControls
 diff --git a/runtime/src/hle/lifeking_natives.cpp b/runtime/src/hle/lifeking_natives.cpp
 new file mode 100644
-index 0000000..2dd7bca
+index 0000000..2897239
 --- /dev/null
 +++ b/runtime/src/hle/lifeking_natives.cpp
-@@ -0,0 +1,306 @@
+@@ -0,0 +1,344 @@
 +// Natives for My Life as a King (WiiWare PAL, WFCPGD): functions of its own SDK build that need a
 +// host-side answer. Registered only while WFCPGD runs (FOREIGN_GAME_NATIVE, see hle_stubs.h).
 +
@@ -8540,6 +8540,9 @@ index 0000000..2dd7bca
 +// UpdateFrame functions (the users of smBaseUpdateRate), how many objects, how many updates per game
 +// frame, and the rates (FrameCtrl rate, set by the game) they run at. Used to find which animations
 +// the game already slows down itself, so the 60 Hz mode does not slow them twice.
++#include <algorithm>
++#include <chrono>
++#include <climits>
 +#include <map>
 +
 +namespace {
@@ -8624,6 +8627,8 @@ index 0000000..2dd7bca
 +std::map<uint32_t, ObjectRate> g_objectSite;   // animation object -> site and rate it was set last
 +uint32_t g_blendCaller = 0;                    // site of the blend SetUpdateRate in progress
 +uint32_t g_gameFrame = 0;
++uint32_t g_halvedSteps = 0;                    // trace: animation steps halved / kept full
++uint32_t g_fullSteps = 0;
 +std::map<uint64_t, uint32_t> g_rateSetters;    // (LR << 16 | rate * 100) -> calls, for the trace
 +
 +void SetBaseUpdateRate(float value) {
@@ -8676,7 +8681,9 @@ index 0000000..2dd7bca
 +template <int K>
 +void LifeKing_AnimUpdate(CpuContext* ctx) {
 +    if (LifeKing60Hz()) {
-+        SetBaseUpdateRate(SpeedDriven(ctx->gpr[3]) ? 1.0f : 0.5f);
++        const bool full = SpeedDriven(ctx->gpr[3]);
++        ++(full ? g_fullSteps : g_halvedSteps);
++        SetBaseUpdateRate(full ? 1.0f : 0.5f);
 +    }
 +    if (LifeKingAnimTrace()) {
 +        const uint32_t obj = ctx->gpr[3];
@@ -8692,10 +8699,41 @@ index 0000000..2dd7bca
 +}
 +} // namespace
 +
++// CUpdateModels(microseconds) (script binding 0x8004C540 -> System 0x80032E98): the model clock the
++// scripts hand to the engine, which turns it into the animation rates (elapsed / 33.32 ms, 0x800AA4F8).
++struct ModelClock {
++    uint32_t calls = 0;
++    int64_t sum = 0;
++    int32_t min = INT32_MAX;
++    int32_t max = INT32_MIN;
++};
++ModelClock g_modelClock;
++const auto g_traceStart = std::chrono::steady_clock::now();
++
++extern "C" void LifeKing_UpdateModels(CpuContext* ctx) {
++    if (LifeKingAnimTrace()) {
++        const int32_t us = static_cast<int32_t>(ctx->gpr[4]);
++        ++g_modelClock.calls;
++        g_modelClock.sum += us;
++        g_modelClock.min = std::min(g_modelClock.min, us);
++        g_modelClock.max = std::max(g_modelClock.max, us);
++    }
++    GuestFunctions::BaseTranslation(0x80032E98u)(ctx);
++}
++FOREIGN_GAME_WRAPPER(WFCPGD, 80032E98, LifeKing_UpdateModels);
++
 +extern "C" void LifeKing_AnimTraceFrame() {
 +    ++g_gameFrame;
 +    if (g_objectSite.size() > 8192) g_objectSite.clear();  // freed objects; live ones are set again next frame
 +    if (!LifeKingAnimTrace()) return;
++    if (g_animFrames + 1 >= 300) {
++        const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - g_traceStart).count();
++        RT_LOGF("lifeking", "t=%.0fs: model clock %u calls/300 frames, us avg %.0f min %d max %d; steps halved %u full %u\n",
++                t, g_modelClock.calls, g_modelClock.calls ? static_cast<double>(g_modelClock.sum) / g_modelClock.calls : 0.0,
++                g_modelClock.calls ? g_modelClock.min : 0, g_modelClock.calls ? g_modelClock.max : 0, g_halvedSteps, g_fullSteps);
++        g_modelClock = ModelClock{};
++        g_halvedSteps = g_fullSteps = 0;
++    }
 +    if (g_animFrames + 1 >= 300 && !g_rateSetters.empty()) {
 +        std::multimap<uint32_t, uint64_t, std::greater<>> byCount;
 +        for (const auto& [key, n] : g_rateSetters) byCount.emplace(n, key);
