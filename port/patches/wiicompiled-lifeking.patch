@@ -8433,10 +8433,10 @@ index 0000000..3840c1e
 +} // namespace TouchControls
 diff --git a/runtime/src/hle/lifeking_natives.cpp b/runtime/src/hle/lifeking_natives.cpp
 new file mode 100644
-index 0000000..e732c2f
+index 0000000..bbe3acc
 --- /dev/null
 +++ b/runtime/src/hle/lifeking_natives.cpp
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,207 @@
 +// Natives for My Life as a King (WiiWare PAL, WFCPGD): functions of its own SDK build that need a
 +// host-side answer. Registered only while WFCPGD runs (FOREIGN_GAME_NATIVE, see hle_stubs.h).
 +
@@ -8503,8 +8503,11 @@ index 0000000..e732c2f
 +constexpr uint32_t kRetracesSinceFrame = 0x8039DC10u;
 +} // namespace
 +
++extern "C" void LifeKing_AnimTraceFrame();
++
 +// Frame wait: with one retrace already gone, the game's own code waits for none more; with none, one.
 +extern "C" void LifeKing_FrameWait(CpuContext* ctx) {
++    LifeKing_AnimTraceFrame();
 +    if (LifeKing60Hz() && Memory::Read32(kRetracesSinceFrame) == 0) {
 +        Memory::Write32(kRetracesSinceFrame, 1);
 +    }
@@ -8538,6 +8541,109 @@ index 0000000..e732c2f
 +    GuestFunctions::BaseTranslation(0x8003364Cu)(ctx);
 +}
 +FOREIGN_GAME_WRAPPER(WFCPGD, 8003364C, LifeKing_IsRefreshRate60);
++
++// --- Animation trace (LIFEKING_ANIM_TRACE=1) ------------------------------------------------------
++// Every few seconds, logs how the game drives nw4r::g3d animations: for each of the seven AnmObj
++// UpdateFrame functions (the users of smBaseUpdateRate), how many objects, how many updates per game
++// frame, and the rates (FrameCtrl rate, set by the game) they run at. Used to find which animations
++// the game already slows down itself, so the 60 Hz mode does not slow them twice.
++#include <map>
++
++namespace {
++bool LifeKingAnimTrace() {
++    static const bool on = [] {
++        const char* value = std::getenv("LIFEKING_ANIM_TRACE");
++        return value != nullptr && value[0] != '0';
++    }();
++    return on;
++}
++
++struct AnimKind {
++    uint32_t address;
++    uint32_t rateOffset;
++};
++constexpr AnimKind kAnimKinds[7] = {
++    {0x801B16C8u, 0x1Cu}, {0x801B1F60u, 0x1Cu}, {0x801B2CE4u, 0x1Cu}, {0x801B3710u, 0x1Cu},
++    {0x801B52BCu, 0x1Cu}, {0x801B60E8u, 0x1Cu}, {0x801B6F7Cu, 0x10u},
++};
++
++struct AnimStats {
++    std::map<uint32_t, uint32_t> callsPerObject;  // object -> calls in the window
++    std::map<int, uint32_t> rates;                // rate * 100 -> calls
++    std::map<uint32_t, uint32_t> callers;         // LR -> calls
++};
++AnimStats g_animStats[7];
++uint32_t g_animFrames = 0;
++
++void ReportAnimTrace() {
++    if (++g_animFrames < 300) return;
++    for (int k = 0; k < 7; ++k) {
++        AnimStats& s = g_animStats[k];
++        if (s.callsPerObject.empty()) continue;
++        uint32_t calls = 0, multi = 0;
++        for (const auto& [obj, n] : s.callsPerObject) {
++            calls += n;
++            if (n > g_animFrames + g_animFrames / 4) ++multi;
++        }
++        char line[512];
++        int len = std::snprintf(line, sizeof(line), "anim kind %d (0x%08X): %zu objects, %.2f updates/frame/object, %u updated more than once a frame; rates:",
++                                k, kAnimKinds[k].address, s.callsPerObject.size(),
++                                static_cast<double>(calls) / g_animFrames / s.callsPerObject.size(), multi);
++        std::multimap<uint32_t, int, std::greater<>> byCount;
++        for (const auto& [rate, n] : s.rates) byCount.emplace(n, rate);
++        int shown = 0;
++        for (const auto& [n, rate] : byCount) {
++            if (shown++ == 8 || len >= static_cast<int>(sizeof(line)) - 32) break;
++            len += std::snprintf(line + len, sizeof(line) - len, " %.2f x%u", rate / 100.0, n);
++        }
++        len += std::snprintf(line + len, sizeof(line) - len, "; callers:");
++        std::multimap<uint32_t, uint32_t, std::greater<>> byCaller;
++        for (const auto& [lr, n] : s.callers) byCaller.emplace(n, lr);
++        shown = 0;
++        for (const auto& [n, lr] : byCaller) {
++            if (shown++ == 4 || len >= static_cast<int>(sizeof(line)) - 24) break;
++            len += std::snprintf(line + len, sizeof(line) - len, " %08X x%u", lr, n);
++        }
++        RT_LOGF("lifeking", "%s\n", line);
++        s = AnimStats{};
++    }
++    g_animFrames = 0;
++}
++
++template <int K>
++void LifeKing_AnimUpdate(CpuContext* ctx) {
++    if (LifeKingAnimTrace()) {
++        const uint32_t obj = ctx->gpr[3];
++        uint32_t bits = Memory::Read32(obj + kAnimKinds[K].rateOffset);
++        float rate;
++        std::memcpy(&rate, &bits, sizeof(rate));
++        AnimStats& s = g_animStats[K];
++        ++s.callsPerObject[obj];
++        ++s.rates[static_cast<int>(rate * 100.0f + (rate >= 0 ? 0.5f : -0.5f))];
++        ++s.callers[ctx->lr];
++    }
++    GuestFunctions::BaseTranslation(kAnimKinds[K].address)(ctx);
++}
++} // namespace
++
++extern "C" void LifeKing_AnimTraceFrame() {
++    if (LifeKingAnimTrace()) ReportAnimTrace();
++}
++
++extern "C" void LifeKing_AnimUpdate0(CpuContext* ctx) { LifeKing_AnimUpdate<0>(ctx); }
++extern "C" void LifeKing_AnimUpdate1(CpuContext* ctx) { LifeKing_AnimUpdate<1>(ctx); }
++extern "C" void LifeKing_AnimUpdate2(CpuContext* ctx) { LifeKing_AnimUpdate<2>(ctx); }
++extern "C" void LifeKing_AnimUpdate3(CpuContext* ctx) { LifeKing_AnimUpdate<3>(ctx); }
++extern "C" void LifeKing_AnimUpdate4(CpuContext* ctx) { LifeKing_AnimUpdate<4>(ctx); }
++extern "C" void LifeKing_AnimUpdate5(CpuContext* ctx) { LifeKing_AnimUpdate<5>(ctx); }
++extern "C" void LifeKing_AnimUpdate6(CpuContext* ctx) { LifeKing_AnimUpdate<6>(ctx); }
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B16C8, LifeKing_AnimUpdate0);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B1F60, LifeKing_AnimUpdate1);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B2CE4, LifeKing_AnimUpdate2);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B3710, LifeKing_AnimUpdate3);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B52BC, LifeKing_AnimUpdate4);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B60E8, LifeKing_AnimUpdate5);
++FOREIGN_GAME_WRAPPER(WFCPGD, 801B6F7C, LifeKing_AnimUpdate6);
 diff --git a/runtime/src/hle/os/os_interrupt.cpp b/runtime/src/hle/os/os_interrupt.cpp
 index 56f6871..7eea5ac 100644
 --- a/runtime/src/hle/os/os_interrupt.cpp
