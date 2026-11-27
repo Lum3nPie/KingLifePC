@@ -132,3 +132,6 @@ Rendering goes through aurora on Dawn (WebGPU), which already targets Direct3D 1
 - 2026-11-26: skeleton set up, build matches.
 - 2026-11-26: matched Runtime.PPCEABI.H/global_destructor_chain.c, Runtime.PPCEABI.H/__init_cpp_exceptions.cpp, revolution/os/PPCArch.c.
 - 2026-11-26: matched game/WCThread.cpp (first game code). main.cpp deferred until MSL std::string is reconstructed.
+
+### Controller mapping (checked 27/11, validated by Liara)
+The emulated Wii Remote never connects (console.log: "the game refused L2CAP PSM 0x11"): the game reads the pad through its own PADRead (0x800FB678 -> `PAD__Read_HLE`, `runtime/src/hle/input/pad.cpp`). The game uses GC A = confirm, B = cancel, X = top view, Y = Chime. `ApplyLifeKingLayout` (WFCPGD only) reads the face buttons by SDL position: right -> A, bottom -> B, left -> Y, top -> X. Aurora's own tables differ by brand (Xbox: EAST -> X, WEST -> B), so they are bypassed for these four buttons. The C-stick X is inverted, Y unchanged. The `emulated_remote*.cpp` Classic Controller code has no effect on this game.

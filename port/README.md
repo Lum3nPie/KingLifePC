@@ -20,9 +20,10 @@ The decompilation in the rest of this repository keeps its own licence.
 
 - Boots to the title screen, new game, prologue and play.
 - Controls: any pad (Xbox Series, DualSense...) through SDL, keyboard, mouse as the pointer. The
-  game gets an emulated Wii Remote carrying a **Classic Controller**: A/B/X/Y, D-pad, both sticks,
-  analog L/R, Z = ZR, Start = +, Z+Start = Home, Z+Y = -, Z+X = ZL. F10 opens the settings
-  (bindings, graphics API, resolution...).
+  game reads the pad as a GameCube controller. The face buttons go by position, as on a Wii Classic
+  Controller: right (Xbox B) confirms, bottom (Xbox A) cancels, left (Xbox X) calls Chime, top
+  (Xbox Y) is the top view. Left and right are swapped on the right stick, so the view turns the
+  way it is pushed. F10 opens the settings (bindings, graphics API, resolution...).
 - Sound, 16:9 picture stretched to the window.
 - **Native 60 FPS** (new in v0.2): the game logic runs at 60 Hz with game, animations, cutscenes,
   effects, menus and music at their normal speed, without frame interpolation. `LIFEKING_FPS=30`
