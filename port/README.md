@@ -1,4 +1,4 @@
-# KingLife: My Life as a King PC port (v0.2)
+# KingLife: My Life as a King PC port (v0.3)
 
 A native Windows build of *My Life as a King* (WiiWare, PAL, `WFCP`), made by **static
 recompilation**: the game's PowerPC code is translated to C++ by
@@ -16,7 +16,7 @@ reuses the foreign-game patches of
 [HarvestMoonAnimalParadeRecomp](https://github.com/RodoLy/HarvestMoonAnimalParadeRecomp) (GPL-3.0).
 The decompilation in the rest of this repository keeps its own licence.
 
-## What works (v0.2)
+## What works (v0.3)
 
 - Boots to the title screen, new game, prologue and play.
 - Controls: any pad (Xbox Series, DualSense...) through SDL, keyboard, mouse as the pointer. The
@@ -29,7 +29,8 @@ The decompilation in the rest of this repository keeps its own licence.
   effects, menus and music at their normal speed, without frame interpolation. `LIFEKING_FPS=30`
   gives the original 30 FPS. The 60 FPS mode needs a patched copy of the data archive, which
   `build.ps1` makes from your own content 2 into `port/lifeking-mod60` (see `docs/NOTES.md`).
-- The app is called **KingLife** (`KingLife.exe`, blue crystal icon drawn by `tools/make_icon.py`).
+- The app is called **KingLife** (`KingLife.exe`, blue crystal icon drawn by `tools/make_icon.py`); the
+  window shows "KingLife <version>", written once in `runtime/include/lifeking_version.h`.
 
 Tip: leave F10's frame interpolation Off. It costs a lot on the render thread, and since the game's
 logic is tied to its frames, it slowed the game and the music in heavy scenes (Chime, buildings).
