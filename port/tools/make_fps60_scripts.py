@@ -22,9 +22,11 @@ HERE = Path(__file__).resolve().parent
 RULES = [
     # CUpdateModels takes the microseconds since the last update. During camera events and demo
     # scenes the scripts pass one 30 Hz (or 25 Hz) frame instead, which at 60 FPS ran every
-    # cutscene animation twice as fast. The trailing tab of those lines makes room.
-    (b"diff = 100000/3.0;\t", b"diff=1e6/CGetFPS();", 4, "camera-event model clock, 60 Hz branch"),
-    (b"diff = 100000/2.5;\t", b"diff=1e6/CGetFPS();", 3, "camera-event model clock, 50 Hz branch"),
+    # cutscene animation twice as fast. GAME_SPF is the scripts' own 1/CGetFPS(); the line's
+    # indentation and trailing tab make room. (A first try with the literal 1e6 broke the script
+    # load: this Squirrel does not take that notation.)
+    (b"			diff = 100000/3.0;	", b"diff=1000000*GAME_SPF;", 4, "camera-event model clock, 60 Hz branch"),
+    (b"			diff = 100000/2.5;	", b"diff=1000000*GAME_SPF;", 3, "camera-event model clock, 50 Hz branch"),
 ]
 
 
