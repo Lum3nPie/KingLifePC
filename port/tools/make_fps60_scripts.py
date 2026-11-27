@@ -25,8 +25,12 @@ RULES = [
     # cutscene animation twice as fast. GAME_SPF is the scripts' own 1/CGetFPS(); the line's
     # indentation and trailing tab make room. (A first try with the literal 1e6 broke the script
     # load: this Squirrel does not take that notation.)
-    (b"			diff = 100000/3.0;	", b"diff=1000000*GAME_SPF;", 4, "camera-event model clock, 60 Hz branch"),
-    (b"			diff = 100000/2.5;	", b"diff=1000000*GAME_SPF;", 3, "camera-event model clock, 50 Hz branch"),
+    (b"\t\t\tdiff = 100000/3.0;\t", b"diff=1000000*GAME_SPF;", 4, "camera-event model clock, 60 Hz branch"),
+    (b"\t\t\tdiff = 100000/2.5;\t", b"diff=1000000*GAME_SPF;", 3, "camera-event model clock, 50 Hz branch"),
+    # The name keyboards (MenuKeyboard, MenuKeyboardParentalControlPassword) blink the input cursor
+    # every EFFECT_TIME frames: 6 frames at 30 Hz, so 12 at 60 Hz.
+    (b"static EFFECT_TIME\t= 6;\t", b"static EFFECT_TIME\t=12;\t", 1, "name keyboard cursor blink"),
+    (b"static EFFECT_TIME\t\t= 6;\t", b"static EFFECT_TIME\t\t=12;\t", 1, "password keyboard cursor blink"),
 ]
 
 
