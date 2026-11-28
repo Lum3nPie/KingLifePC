@@ -22,6 +22,10 @@ Current version: **0.4**.
 - **16:9 picture** that keeps its shape in any window size or in full screen, with black bars.
 - **Add-on content (DLC).** The 15 packs of the WiiWare DLC, installed from your own dump with
   `port/tools/install_dlc.py`.
+- **Display settings in F10 > Graphics** (new in v0.5): field of view (75-150 %), "Max detail (LOD)"
+  to keep far models at full detail, and "UI scale": one slider per part of the interface (clock,
+  notifications, dialogue, system messages, keyboard, menus, help bar, titles, icons over
+  characters, room banner), 50-100 %, each element staying in its corner or centre.
 - Sound, and a native `KingLife.exe` with its own icon.
 
 ## What you need

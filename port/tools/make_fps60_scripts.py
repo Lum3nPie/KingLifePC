@@ -48,6 +48,11 @@ RULES = [
     # dispatcher every 90: keep those at two and three seconds.
     (b"if ( (time % 60) == 20 ) {", b"if ( (time %120) == 20 ) {", 1, "villager pop check interval"),
     (b"(gameTime % 90) == 0", b"(gameTime %180) == 0", 1, "party creation check interval"),
+    # Not a 60 Hz rule: F10 "UI scale" > "Over characters" (lifeking_ui_scale.cpp). ActorIcon.setScale
+    # passes a negative x scale, which tells the runtime the object is an icon over a character (!,
+    # smiley...); the runtime makes it positive again and applies the setting.
+    (b"setObjectScale(_iconID, scale, scale, scale)", b"setObjectScale(_iconID,-scale, scale, scale)", 1,
+     "icons over characters marked for the UI scale"),
 ]
 
 

@@ -16,7 +16,7 @@ reuses the foreign-game patches of
 [HarvestMoonAnimalParadeRecomp](https://github.com/RodoLy/HarvestMoonAnimalParadeRecomp) (GPL-3.0).
 The decompilation in the rest of this repository keeps its own licence.
 
-## What works (v0.4)
+## What works (v0.5)
 
 - Boots to the title screen, new game, prologue and play.
 - Controls: any pad (Xbox Series, DualSense...) through SDL, keyboard, mouse as the pointer. The
@@ -39,6 +39,10 @@ The decompilation in the rest of this repository keeps its own licence.
 
 Tip: leave F10's frame interpolation Off. It costs a lot on the render thread, and since the game's
 logic is tied to its frames, it slowed the game and the music in heavy scenes (Chime, buildings).
+
+F10 > Graphics also has (new in v0.5) "Field of view", "Max detail (LOD)" and "UI scale", one
+slider per UI category, saved in the config and applied at once. A field of view above 100 % can put
+the camera under the ground in some cutscenes.
 
 ## Building
 

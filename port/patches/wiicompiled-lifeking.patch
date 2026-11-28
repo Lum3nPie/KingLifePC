@@ -1232,10 +1232,10 @@ index 0000000..15ca9df
 +
 +} // namespace HangWatch
 diff --git a/runtime/include/hle_stubs.h b/runtime/include/hle_stubs.h
-index e3ba175..79c16f2 100644
+index e3ba175..4585cf6 100644
 --- a/runtime/include/hle_stubs.h
 +++ b/runtime/include/hle_stubs.h
-@@ -17,7 +17,34 @@ void VI_HLE_WaitForNextRetracePoll();
+@@ -17,7 +17,55 @@ void VI_HLE_WaitForNextRetracePoll();
  // for the GXCopyDisp producer path and false for retrace-context presents.
  void VI_HLE_PresentFrame(bool presentedXfb, bool paceToRetrace);
  bool VI_HLE_IsAdvancingRetrace();
@@ -1260,6 +1260,27 @@ index e3ba175..79c16f2 100644
 +// The current F10 field of view scale (1 = the game's own), for code that widens what the game
 +// culls to match the wider picture.
 +float GX_HLE_FieldOfViewScale();
++// Keeps the game's own field of view while on (nested): for a 3D model drawn inside a menu.
++void GX_HLE_SuppressFieldOfView(bool suppress);
++// Half the width of the game's 2D UI screen (448 high), from its last orthographic projection; 0 if none.
++float GX_HLE_UiOrthoHalfWidth();
++// While on, a perspective projection's screen offset (NDC) moves towards (anchorX, anchorY) by
++// scale: a 3D model drawn in a shrunk menu follows the menu (My Life as a King, lifeking_ui_scale.cpp).
++void GX_HLE_SetScreenRemap(bool on, float anchorX, float anchorY, float scale);
++// The F10 "Max detail" setting (My Life as a King, lifeking_natives.cpp): every model at its most
++// detailed level, at any distance and in every camera mode. Takes effect on the game's next frame.
++void LifeKing_HLE_SetMaxDetail(bool enabled);
++// The F10 "UI scale" settings (My Life as a King, lifeking_ui_scale.cpp): one scale per kind of
++// on-screen element (clock, notifications, dialogue...), each kept against its screen corner or edge.
++// Categories are numbered 0 to count - 1; the key is the [ui_scale] name in Config.toml. Live.
++int LifeKing_HLE_UiScaleCategoryCount();
++const char* LifeKing_HLE_UiScaleCategoryKey(int category);
++const char* LifeKing_HLE_UiScaleCategoryLabel(int category);
++const char* LifeKing_HLE_UiScaleCategoryHint(int category);
++void LifeKing_HLE_SetUiScale(int category, float scale);
++// Called by the frame wait (game thread): applies UI scale changes that need the game's own code.
++struct CpuContext;
++void LifeKing_UiScaleFrame(CpuContext* ctx);
 +constexpr float kGX_HLE_WorldCameraMaxScale = 6.0f;  // a world camera's x scale (2n / (r - l)) at most
 +// How many times VI_HLE_NoteWorldDrawn has been called: a game can tell which of its own draw calls
 +// drew the 3D world.
@@ -1270,7 +1291,7 @@ index e3ba175..79c16f2 100644
  void Audio_HLE_Tick(CpuContext* ctx, uint32_t deltaMicros);
  void Audio_HLE_Poll(CpuContext* ctx);
  // Deferred twin of Audio_HLE_Poll for the long host waits that already service
-@@ -47,3 +74,22 @@ extern "C" void OS_HLE_EndDeferredGuestCallbacks();
+@@ -47,3 +95,22 @@ extern "C" void OS_HLE_EndDeferredGuestCallbacks();
  #define PPC_NATIVE_OVERRIDE_VOID(addr_hex, name, arg_list, call_list) \
      [[maybe_unused]] static void native_signature_##addr_hex arg_list { name call_list; } \
      REGISTER_NATIVE_FUNCTION(0x##addr_hex, name)
@@ -1295,7 +1316,7 @@ index e3ba175..79c16f2 100644
 +        false, kPpcAllNonvolatileFprMask, 0, 0, &AbiRawCpuThunk<&name>::Invoke)
 diff --git a/runtime/include/lifeking_version.h b/runtime/include/lifeking_version.h
 new file mode 100644
-index 0000000..d33c4b6
+index 0000000..aeab306
 --- /dev/null
 +++ b/runtime/include/lifeking_version.h
 @@ -0,0 +1,6 @@
@@ -1303,7 +1324,7 @@ index 0000000..d33c4b6
 +
 +// KingLife (PC port of My Life as a King): the one place the version is written. The app's name is
 +// "KingLife <version>" (window title, startup screen, settings bar); the git tag is v<version>.
-+#define LIFEKING_VERSION "0.4"
++#define LIFEKING_VERSION "0.5"
 +#define LIFEKING_APP_NAME "KingLife " LIFEKING_VERSION
 diff --git a/runtime/include/perf_stats.h b/runtime/include/perf_stats.h
 index 4152ec0..cc9a849 100644
@@ -1371,7 +1392,7 @@ index 4152ec0..cc9a849 100644
 +void OnFrame(double busyMs) noexcept;
 +} // namespace LifeKingProfiler
 diff --git a/runtime/include/runtime_config.h b/runtime/include/runtime_config.h
-index ea5a12b..ff7e599 100644
+index ea5a12b..8aa1ae2 100644
 --- a/runtime/include/runtime_config.h
 +++ b/runtime/include/runtime_config.h
 @@ -40,6 +40,9 @@ struct RuntimeUserConfig {
@@ -1384,10 +1405,16 @@ index ea5a12b..ff7e599 100644
      std::optional<std::string> graphicsApi;
      std::optional<std::string> displayMode;
      std::optional<uint32_t> frameInterpolationFps;
-@@ -51,6 +54,14 @@ struct RuntimeUserConfig {
+@@ -51,6 +54,20 @@ struct RuntimeUserConfig {
      std::optional<bool> textureReplacements;
      std::optional<bool> textureDumps;
      std::optional<bool> showFps;
++    // [video] max_detail: models always at their most detailed level (My Life as a King: the game's
++    // own "always high" LOD distances, lifeking_natives.cpp).
++    std::optional<bool> maxDetail;
++    // [ui_scale] <category> = 0.5..1: how big each kind of on-screen element is drawn, per category
++    // (My Life as a King, lifeking_ui_scale.cpp). A missing category is the game's own size (1).
++    std::map<std::string, float> uiScale;
 +    // [input] touch_controls: the on-screen controller (hle/input/touch_controls.h). true, false,
 +    // or "auto" (on a touch screen: Android).
 +    std::optional<std::string> touchControls;
@@ -1399,7 +1426,7 @@ index ea5a12b..ff7e599 100644
      std::optional<uint32_t> disabledPostProcessingPaths;
      std::optional<float> audioVolume;
      std::optional<float> audioMusicVolume;
-@@ -86,6 +97,12 @@ struct RuntimeUserConfig {
+@@ -86,6 +103,12 @@ struct RuntimeUserConfig {
      // it here instead of copying the pack, so an asset-only update is visible on the next launch.
      std::optional<std::string> retroRewindRoot;
      std::vector<std::string> overlayRoots;
@@ -1412,13 +1439,17 @@ index ea5a12b..ff7e599 100644
      // Controller mappings use Wii/GameCube button names as keys and up to two
      // comma-separated SDL-style physical button names ("south", or
      // "dpad_up,left_shoulder") as values; pressing either bound button counts.
-@@ -139,13 +156,33 @@ inline std::string Trim(std::string_view text) {
+@@ -139,13 +162,37 @@ inline std::string Trim(std::string_view text) {
      return std::string(text.substr(begin, end - begin));
  }
  
 +// The field of view setting: from 75% to 150% of the one the game asks for.
 +inline constexpr float kMinFieldOfView = 0.75f;
 +inline constexpr float kMaxFieldOfView = 1.5f;
++
++// The per-category UI scale ([ui_scale]): from 50% to 100% of the game's own size.
++inline constexpr float kMinUiScale = 0.5f;
++inline constexpr float kMaxUiScale = 1.0f;
 +
  inline bool IsSupportedResolutionMultiplier(float value) {
 -    static constexpr std::array values{0.0f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f, 8.0f};
@@ -1447,7 +1478,7 @@ index ea5a12b..ff7e599 100644
  inline bool IsSupportedGraphicsApi(std::string_view value) {
  #if defined(__APPLE__)
      static constexpr std::array<std::string_view, 2> values{"auto", "metal"};
-@@ -168,7 +205,7 @@ inline bool IsSupportedDisplayMode(std::string_view value) {
+@@ -168,7 +215,7 @@ inline bool IsSupportedDisplayMode(std::string_view value) {
  // 240 was offered by an early build and is no longer supported; a saved 240 is
  // migrated to 180 at the parse site.
  inline bool IsSupportedFrameInterpolationFps(uint32_t value) {
@@ -1456,7 +1487,7 @@ index ea5a12b..ff7e599 100644
  }
  
  inline std::optional<std::filesystem::path> ExecutableDirectory() {
-@@ -187,6 +224,13 @@ inline std::optional<std::filesystem::path> ExecutableDirectory() {
+@@ -187,6 +234,13 @@ inline std::optional<std::filesystem::path> ExecutableDirectory() {
      }
  #elif defined(__APPLE__)
      return RuntimePlatform::ExecutableDirectory();
@@ -1470,7 +1501,7 @@ index ea5a12b..ff7e599 100644
  #else
      // /proc/self/exe is a Linux-specific magic symlink to the running executable; readlink()
      // does not NUL-terminate and silently truncates if the buffer is too small, so this grows
-@@ -298,6 +342,10 @@ inline void EnsureConfigFile() {
+@@ -298,6 +352,10 @@ inline void EnsureConfigFile() {
                "# replacement would need. Both are read once, at startup.\n"
                "texture_replacements = false\n"
                "texture_dumps = false\n\n"
@@ -1481,7 +1512,7 @@ index ea5a12b..ff7e599 100644
                "[audio]\n"
                "volume = 1.0\n"
                "music_volume = 1.0\n"
-@@ -439,6 +487,10 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
+@@ -439,6 +497,10 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
          value && IsSupportedResolutionMultiplier(*value)) {
          config.resolutionMultiplier = *value;
      }
@@ -1492,10 +1523,20 @@ index ea5a12b..ff7e599 100644
      if (auto value = FindConfigValue<std::string>(document, "video", "graphics_api")) {
          if (IsSupportedGraphicsApi(*value)) {
              config.graphicsApi = *value;
-@@ -464,6 +516,46 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
+@@ -464,6 +526,56 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
      config.gxWorker = FindConfigValue<bool>(document, "video", "gx_worker");
      config.disableCopyFilter = FindConfigValue<bool>(document, "video", "disable_copy_filter");
      config.showFps = FindConfigValue<bool>(document, "video", "show_fps");
++    config.maxDetail = FindConfigValue<bool>(document, "video", "max_detail");
++    if (document.contains("ui_scale") && document.at("ui_scale").is_table()) {
++        for (const auto& [key, value] : document.at("ui_scale").as_table()) {
++            (void)value;
++            if (auto scale = FindConfigFloat(document, "ui_scale", key);
++                scale && *scale >= kMinUiScale && *scale <= kMaxUiScale) {
++                config.uiScale[std::string(key)] = *scale;
++            }
++        }
++    }
 +    if (auto value = FindConfigValue<bool>(document, "input", "touch_controls")) {
 +        config.touchControls = *value ? "true" : "false";
 +    } else if (auto text = FindConfigValue<std::string>(document, "input", "touch_controls")) {
@@ -1539,7 +1580,7 @@ index ea5a12b..ff7e599 100644
      config.textureReplacements = FindConfigValue<bool>(document, "video", "texture_replacements");
      config.textureDumps = FindConfigValue<bool>(document, "video", "texture_dumps");
      if (auto value = FindConfigUint(document, "video", "disabled_post_processing_paths");
-@@ -618,6 +710,14 @@ inline std::string FormatString(std::string_view value) {
+@@ -618,6 +730,14 @@ inline std::string FormatString(std::string_view value) {
      return toml::format(toml::value(std::string(value)));
  }
  
@@ -1554,7 +1595,7 @@ index ea5a12b..ff7e599 100644
  inline bool SetResolutionMultiplier(float value) {
      Mutable().resolutionMultiplier = value;
      std::ostringstream formatted;
-@@ -665,6 +765,14 @@ inline bool SetDisplayMode(std::string value) {
+@@ -665,6 +785,14 @@ inline bool SetDisplayMode(std::string value) {
      return WriteSetting("video", "display_mode", FormatString(value));
  }
  
@@ -1569,7 +1610,7 @@ index ea5a12b..ff7e599 100644
  inline bool SetSkipUnreadyPipelines(bool value) {
      Mutable().skipUnreadyPipelines = value;
      return WriteSetting("video", "skip_unready_pipelines", value ? "true" : "false");
-@@ -680,6 +788,34 @@ inline bool SetDisableCopyFilter(bool value) {
+@@ -680,11 +808,52 @@ inline bool SetDisableCopyFilter(bool value) {
      return WriteSetting("video", "disable_copy_filter", value ? "true" : "false");
  }
  
@@ -1604,7 +1645,25 @@ index ea5a12b..ff7e599 100644
  inline bool SetShowFps(bool value) {
      Mutable().showFps = value;
      return WriteSetting("video", "show_fps", value ? "true" : "false");
-@@ -848,6 +984,10 @@ inline uint32_t WindowHeight(uint32_t fallback) {
+ }
+ 
++inline bool SetUiScale(std::string_view category, float value) {
++    value = std::clamp(value, kMinUiScale, kMaxUiScale);
++    Mutable().uiScale[std::string(category)] = value;
++    std::ostringstream formatted;
++    formatted << value;
++    return WriteSetting("ui_scale", category, formatted.str());
++}
++
++inline bool SetMaxDetail(bool value) {
++    Mutable().maxDetail = value;
++    return WriteSetting("video", "max_detail", value ? "true" : "false");
++}
++
+ inline bool SetDisabledPostProcessingPaths(uint32_t value) {
+     Mutable().disabledPostProcessingPaths = value;
+     std::ostringstream formatted;
+@@ -848,6 +1017,10 @@ inline uint32_t WindowHeight(uint32_t fallback) {
      return Get().windowHeight.value_or(fallback);
  }
  
@@ -1615,7 +1674,7 @@ index ea5a12b..ff7e599 100644
  inline float ResolutionMultiplier(float fallback = 1.0f) {
      return std::max(0.0f, Get().resolutionMultiplier.value_or(fallback));
  }
-@@ -979,10 +1119,73 @@ inline bool DisableCopyFilter(bool fallback = true) {
+@@ -979,10 +1152,83 @@ inline bool DisableCopyFilter(bool fallback = true) {
      return Get().disableCopyFilter.value_or(fallback);
  }
  
@@ -1681,6 +1740,16 @@ index ea5a12b..ff7e599 100644
      return Get().showFps.value_or(fallback);
  }
  
++inline float UiScale(std::string_view category, float fallback = 1.0f) {
++    const auto& scales = Get().uiScale;
++    const auto it = scales.find(std::string(category));
++    return std::clamp(it != scales.end() ? it->second : fallback, kMinUiScale, kMaxUiScale);
++}
++
++inline bool MaxDetail(bool fallback = true) {
++    return Get().maxDetail.value_or(fallback);
++}
++
 +// "true", "false" or "auto" (see RuntimeConfig::touchControls).
 +inline std::string TouchControls(std::string fallback = "auto") {
 +    return Get().touchControls.value_or(std::move(fallback));
@@ -1689,7 +1758,7 @@ index ea5a12b..ff7e599 100644
  inline bool TextureReplacements(bool fallback = false) {
      return Get().textureReplacements.value_or(fallback);
  }
-@@ -1036,7 +1239,19 @@ inline std::filesystem::path ResolveRelativeToConfig(const std::string& value) {
+@@ -1036,7 +1282,19 @@ inline std::filesystem::path ResolveRelativeToConfig(const std::string& value) {
  // The extracted DATA directory. Empty when nothing is configured.
  inline std::filesystem::path ResolvedDvdRoot() {
      const std::string configured = DvdRoot();
@@ -10058,16 +10127,17 @@ index 0f79533..a848636 100644
          // The CPU-side SDK reads the GXTexObj at call time; the texture data itself is read later.
          std::optional<TexObjBytes> bytes;
 diff --git a/runtime/src/hle/gx/gx_transform.cpp b/runtime/src/hle/gx/gx_transform.cpp
-index 54e15fa..aef574c 100644
+index 54e15fa..7df371f 100644
 --- a/runtime/src/hle/gx/gx_transform.cpp
 +++ b/runtime/src/hle/gx/gx_transform.cpp
-@@ -1,6 +1,13 @@
+@@ -1,6 +1,14 @@
  // gx_transform.cpp - Viewport, Projection, and Matrix Functions
  #include "isa/big_endian.h"
  #include "gx_internal.h"
 +#include "gx_frame_trace.h"
 +#include "hle_stubs.h"
 +#include "aurora_events.h"
++#include "runtime_log.h"
 +
 +#include <atomic>
 +#include <cmath>
@@ -10075,7 +10145,7 @@ index 54e15fa..aef574c 100644
  
  namespace {
      static inline void SwapBeF32ArrayToHost(const uint32_t* srcBe, float* dst, size_t count) {
-@@ -45,6 +52,9 @@ extern "C" void GX__SetViewportJitter_80173378(float l, float t, float w, float
+@@ -45,6 +53,9 @@ extern "C" void GX__SetViewportJitter_80173378(float l, float t, float w, float
  PPC_NATIVE_OVERRIDE_VOID(80173378, GX__SetViewportJitter_80173378, (float l, float t, float w, float h, float nz, float fz, uint32_t f), (l, t, w, h, nz, fz, f));
  
  extern "C" void GX__SetViewport_801733b4(float l, float t, float w, float h, float nz, float fz) {
@@ -10085,7 +10155,7 @@ index 54e15fa..aef574c 100644
      g_viewportState[0]=l; g_viewportState[1]=t; g_viewportState[2]=w; g_viewportState[3]=h; g_viewportState[4]=nz; g_viewportState[5]=fz;
      GxWorker::Run([=] { GXSetViewport(l, t, w, h, nz, fz); });
  }
-@@ -104,6 +114,9 @@ extern "C" void GX__SetScissor_80173430(uint32_t l, uint32_t t, uint32_t w, uint
+@@ -104,6 +115,9 @@ extern "C" void GX__SetScissor_80173430(uint32_t l, uint32_t t, uint32_t w, uint
      // No viewport replay here: aurora recomputes viewport and scissor together
      // on every scissor change (set_logical_scissor -> apply_logical_render_state),
      // so re-issuing the current viewport would be duplicate work.
@@ -10095,7 +10165,7 @@ index 54e15fa..aef574c 100644
      GxWorker::Run([l, t, w, h] { GXSetScissor(l, t, w, h); });
  }
  PPC_NATIVE_OVERRIDE_VOID(80173430, GX__SetScissor_80173430, (uint32_t l, uint32_t t, uint32_t w, uint32_t h), (l, t, w, h));
-@@ -112,10 +125,155 @@ PPC_NATIVE_OVERRIDE_VOID(80173430, GX__SetScissor_80173430, (uint32_t l, uint32_
+@@ -112,10 +126,209 @@ PPC_NATIVE_OVERRIDE_VOID(80173430, GX__SetScissor_80173430, (uint32_t l, uint32_
  // Projection
  // ============================================================================
  
@@ -10149,15 +10219,69 @@ index 54e15fa..aef574c 100644
 +// How much closer the near plane comes for a widened world camera (see ApplyFieldOfView).
 +constexpr double kFieldOfViewNearDivisor = 4.0;
 +
++// While > 0 the field of view is the game's own (GX_HLE_SuppressFieldOfView): My Life as a King
++// draws the characters of its rooms (Chime, the chancellor, the signboard...) as 3D models inside a
++// menu, with a camera of their own that the setting must not widen.
++static std::atomic<int> g_fieldOfViewSuppressed{0};
++
 +float GX_HLE_FieldOfViewScale() {
++    if (g_fieldOfViewSuppressed.load(std::memory_order_relaxed) > 0) return 1.0f;
 +    return g_fieldOfViewScale.load(std::memory_order_relaxed);
++}
++
++void GX_HLE_SuppressFieldOfView(bool suppress) {
++    g_fieldOfViewSuppressed.fetch_add(suppress ? 1 : -1, std::memory_order_relaxed);
++}
++
++// Half the width of the last 2D (orthographic) projection 448 units high: the game's UI screen,
++// 320 in 4:3 and 422 in 16:9 for My Life as a King. 0 until one is seen.
++static std::atomic<float> g_uiOrthoHalfWidth{0.0f};
++float GX_HLE_UiOrthoHalfWidth() { return g_uiOrthoHalfWidth.load(std::memory_order_relaxed); }
++static void NoteOrtho(const float* m, GXProjectionType pt) {
++    if (pt != GX_ORTHOGRAPHIC || !(m[0] > 0.0f) || !(m[5] > 0.0f)) return;
++    const float halfHeight = 1.0f / m[5];
++    if (std::fabs(halfHeight - 224.0f) < 1.0f) g_uiOrthoHalfWidth.store(1.0f / m[0], std::memory_order_relaxed);
 +}
 +
 +// Widens a world perspective projection (row-major, as GXSetProjection takes it) by the field of view
 +// scale: the x and y scales and their skews are divided by it, which multiplies tan(half-angle) by the
 +// scale and keeps any off-centre shift in proportion.
++// While a 3D model is drawn inside a menu that the F10 UI scale shrinks (My Life as a King's
++// building menu shows the house there), its on-screen position follows the menu: the projection's
++// screen offset (the model's place on screen, in NDC) is moved towards the menu's anchor by the
++// scale, and its size is scaled the same (around that place). Set around the model's draw by
++// lifeking_ui_scale.cpp.
++static bool g_screenRemapOn = false;
++static float g_screenRemap[3] = {0.0f, 0.0f, 1.0f};  // anchor x, y (NDC), scale
++static int g_screenRemapLogged = 0;
++void GX_HLE_SetScreenRemap(bool on, float anchorX, float anchorY, float scale) {
++    g_screenRemapOn = on;
++    g_screenRemap[0] = anchorX;
++    g_screenRemap[1] = anchorY;
++    g_screenRemap[2] = scale;
++}
++static void ApplyScreenRemap(float* m, GXProjectionType pt) {
++    if (!g_screenRemapOn) return;
++    if (g_screenRemapLogged < 6) {
++        ++g_screenRemapLogged;
++        RT_LOGF("lifeking", "ui scale model projection %s m0 %.4f m2/m3 %.4f/%.4f m5 %.4f m6/m7 %.4f/%.4f\n",
++                pt == GX_PERSPECTIVE ? "perspective" : "ortho", m[0], m[2], m[3], m[5], m[6], m[7]);
++    }
++    if (pt != GX_PERSPECTIVE) return;
++    const float ax = g_screenRemap[0], ay = g_screenRemap[1], scale = g_screenRemap[2];
++    const float dx = -m[2], dy = -m[6];  // where the camera's axis lands on screen, in NDC
++    m[2] = -(ax + (dx - ax) * scale);
++    m[6] = -(ay + (dy - ay) * scale);
++    m[0] *= scale;
++    m[1] *= scale;
++    m[4] *= scale;
++    m[5] *= scale;
++}
++
 +static void ApplyFieldOfView(float* m, GXProjectionType pt) {
-+    const float scale = g_fieldOfViewScale.load(std::memory_order_relaxed);
++    NoteOrtho(m, pt);
++    ApplyScreenRemap(m, pt);
++    const float scale = GX_HLE_FieldOfViewScale();
 +    if (pt != GX_PERSPECTIVE || scale == 1.0f || !(m[0] > 0.0f && m[0] <= kWorldCameraMaxCot)) {
 +        return;
 +    }
@@ -10252,7 +10376,7 @@ index 54e15fa..aef574c 100644
      UpdateProjectionVectorFromMatrix(m, (GXProjectionType)pt);
  }
  PPC_NATIVE_OVERRIDE_VOID(8017301c, GX__SetProjection_8017301c, (uint32_t ma, uint32_t pt), (ma, pt));
-@@ -126,7 +284,12 @@ extern "C" void GX__SetProjectionv_80173080(uint32_t pa) {
+@@ -126,7 +339,12 @@ extern "C" void GX__SetProjectionv_80173080(uint32_t pa) {
      GXProjectionType pt=(v[0]!=0.f)?GX_ORTHOGRAPHIC:GX_PERSPECTIVE;
      float m[16]={0.f}; m[0]=v[1]; m[5]=v[3]; m[10]=v[5]; m[11]=v[6];
      if(pt==GX_PERSPECTIVE){ m[2]=v[2]; m[6]=v[4]; m[14]=-1.f; } else { m[3]=v[2]; m[7]=v[4]; m[15]=1.f; }
@@ -10960,10 +11084,10 @@ index 0000000..3840c1e
 +} // namespace TouchControls
 diff --git a/runtime/src/hle/lifeking_natives.cpp b/runtime/src/hle/lifeking_natives.cpp
 new file mode 100644
-index 0000000..67ab999
+index 0000000..a113847
 --- /dev/null
 +++ b/runtime/src/hle/lifeking_natives.cpp
-@@ -0,0 +1,537 @@
+@@ -0,0 +1,580 @@
 +// Natives for My Life as a King (WiiWare PAL, WFCPGD): functions of its own SDK build that need a
 +// host-side answer. Registered only while WFCPGD runs (FOREIGN_GAME_NATIVE, see hle_stubs.h).
 +
@@ -11014,6 +11138,7 @@ index 0000000..67ab999
 +#include "guest_function_imports.h"
 +#include "runtime_log.h"
 +
++#include <atomic>
 +#include <cstdlib>
 +#include <cstring>
 +
@@ -11101,6 +11226,46 @@ index 0000000..67ab999
 +
 +extern "C" void LifeKing_AnimTraceFrame();
 +
++// --- Max detail (F10) -----------------------------------------------------------------------------
++// The engine picks each model's level of detail from four distances (ints at 0x8039D154..0x8039D160,
++// 30/60/80/100 at boot; read live by the LOD checks around 0x800A1FF4). The scripts set them through
++// worldEngine.setLODDistances, System 0x80034BFC (f1-f4, truncated to ints): Setting.setLOD gives
++// 30/60/80/100 when walking, 0/0/0/0 ("always low") in the top view, construction and a few events,
++// and 1000 each ("always high", the game's own mode, which no script uses). With the setting on, the
++// "always high" distances are kept whatever the scripts ask; the scripts' own values are remembered so
++// turning it off puts them back. Applied on the game's thread, at the next frame wait.
++namespace {
++constexpr uint32_t kLodDistances = 0x8039D154u;
++constexpr uint32_t kLodAlwaysHigh = 1000u;
++std::atomic<bool> g_maxDetail{false};
++bool g_maxDetailApplied = false;
++uint32_t g_gameLodDistances[4] = {30u, 60u, 80u, 100u};
++
++void ApplyMaxDetail() {
++    const bool on = g_maxDetail.load(std::memory_order_relaxed);
++    if (on == g_maxDetailApplied) return;
++    if (on) {
++        for (uint32_t i = 0; i < 4; ++i) g_gameLodDistances[i] = Memory::Read32(kLodDistances + i * 4u);
++    }
++    for (uint32_t i = 0; i < 4; ++i) Memory::Write32(kLodDistances + i * 4u, on ? kLodAlwaysHigh : g_gameLodDistances[i]);
++    g_maxDetailApplied = on;
++    RT_LOGF("lifeking", "max detail %s\n", on ? "on" : "off");
++}
++} // namespace
++
++void LifeKing_HLE_SetMaxDetail(bool enabled) { g_maxDetail.store(enabled, std::memory_order_relaxed); }
++
++extern "C" void LifeKing_SetLODDistances(CpuContext* ctx) {
++    GuestFunctions::BaseTranslation(0x80034BFCu)(ctx);
++    if (g_maxDetailApplied) {
++        for (uint32_t i = 0; i < 4; ++i) {
++            g_gameLodDistances[i] = Memory::Read32(kLodDistances + i * 4u);
++            Memory::Write32(kLodDistances + i * 4u, kLodAlwaysHigh);
++        }
++    }
++}
++FOREIGN_GAME_WRAPPER(WFCPGD, 80034BFC, LifeKing_SetLODDistances);
++
 +constexpr uint32_t kSystem = 0x802B1B78u;          // the engine's system object
 +constexpr uint32_t kSixtyBits = 0x42700000u;       // 60.0f
 +constexpr uint32_t kSystemSetFrameRate = 0x80033664u;
@@ -11111,6 +11276,8 @@ index 0000000..67ab999
 +// conversions (modFrame, the day clock, the cutscene model clock) applied.
 +extern "C" void LifeKing_FrameWait(CpuContext* ctx) {
 +    LifeKing_AnimTraceFrame();
++    ApplyMaxDetail();
++    LifeKing_UiScaleFrame(ctx);
 +    if (LifeKing60Hz()) {
 +        if (Memory::Read32(kSystem + 0x10u) != kSixtyBits) {
 +            RT_LOGF("lifeking", "engine frame rate was reset; setting 60 again\n");
@@ -11501,6 +11668,520 @@ index 0000000..67ab999
 +    }
 +}
 +FOREIGN_GAME_WRAPPER(WFCPGD, 800CB040, LifeKing_MenuAnimeUpdate);
+diff --git a/runtime/src/hle/lifeking_ui_scale.cpp b/runtime/src/hle/lifeking_ui_scale.cpp
+new file mode 100644
+index 0000000..f10358f
+--- /dev/null
++++ b/runtime/src/hle/lifeking_ui_scale.cpp
+@@ -0,0 +1,508 @@
++// F10 "UI scale" for My Life as a King (WFCPGD): one size per kind of on-screen element.
++//
++// The game draws all its 2D interface with nw4r::lyt: a few layouts (menu_eu.arc: common, menu_build,
++// menu_report, menu_room, map...) whose panes the scripts look up by name (MenuPane(menu, "com_clk_nul"),
++// rootPaneName = "com_inf_win"...) and move, show and animate. Every frame each pane's matrix is rebuilt
++// by nw4r::lyt::Pane::CalculateMtx (0x801CF6A8, r3 pane, r4 DrawInfo), which then does the same for its
++// children (vtable +0x10; the game's own pane classes 0x80093714 and 0x800C0854 call it first too).
++//
++// Pane fields used (this nw4r build): +0x0C parent, +0x2C/+0x30 translate x/y, +0x44/+0x48 scale x/y,
++// +0x84 global matrix (3x4), +0xBC name (16 chars). DrawInfo: +0x04 view matrix (3x4), +0x34 view rect
++// (left, top, right, bottom; y up). The game's UI projection is x -320..320 (4:3) or -422..422 (16:9),
++// y -224..224 (0x800C2C94).
++//
++// For the root pane of each element of a category, the wrapper scales it around its anchor for the
++// length of the call: the translate moves towards the anchor by the scale and the pane's own scale is
++// multiplied, so the whole element (children included) shrinks while its anchored edge stays where it
++// was. The anchor is a screen corner or edge (taken from the view rect and brought into the parent's
++// space through the parent's matrix), the screen centre, or the pane's own position (speech bubbles,
++// gauges over characters, which follow a character). Translate and scale are put back after, so the
++// game and its scripts never see them changed, and a change in F10 shows on the next frame.
++#include "hle_stubs.h"
++#include "memory.h"
++
++#include "guest_abi/cpu_context.h"
++#include "guest_function_imports.h"
++#include "runtime_log.h"
++
++#include <atomic>
++#include <cmath>
++#include <cstdint>
++#include <cstring>
++#include <string_view>
++#include <unordered_map>
++
++namespace {
++
++enum Category : int {
++    kClock,
++    kNotifications,
++    kDialogue,
++    kSystemMessages,
++    kKeyboard,
++    kMenus,
++    kHelpBar,
++    kTitles,
++    kGauges,
++    kRoomBanner,
++    kCategoryCount,
++};
++
++struct CategoryInfo {
++    const char* key;    // [ui_scale] key
++    const char* label;  // F10 label
++    const char* hint;   // F10 tooltip
++};
++
++constexpr CategoryInfo kCategories[kCategoryCount] = {
++    {"clock", "Clock and resources", "The clock in the top-left corner, with crystals, gil and happiness. Stays in its corner."},
++    {"notifications", "Notifications", "The messages that slide in at the top right. Stay against the right edge."},
++    {"dialogue", "Dialogue boxes", "Speech bubbles (they keep pointing at who talks) and event message windows."},
++    {"system_messages", "System messages", "Save, load and confirmation windows. Stay centred."},
++    {"keyboard", "Keyboard", "The name entry keyboard. Stays centred."},
++    {"menus", "Menus", "Command menus, building menu and hints, title menu, options. Keep their side of the screen."},
++    {"help_bar", "Help bar", "The help line at the bottom of the screen. Stays against the bottom edge."},
++    {"titles", "Chapter titles and boss bar", "Chapter titles (bottom right) and the boss gauge (bottom)."},
++    {"gauges", "Over characters", "Icons over characters (!, smiley, speech...) and their HP and experience gauges."},
++    {"room_banner", "Room name banner", "The sign at the top of a room (\"The Settlement of...\" in the castle). Stays against the top edge."},
++};
++
++// Where an element is kept, per axis.
++enum Anchor : int8_t {
++    kMin = -1,    // left edge / bottom edge
++    kMid = 0,     // screen centre
++    kMax = 1,     // right edge / top edge
++    kSelf = 2,    // the pane's own position (follows a character)
++    kAuto = 3,    // the third of the screen the pane is in (left/centre/right, bottom/centre/top)
++    kBox = 4,     // the centre of the pane's own box (size and origin): shrinks in place, centred
++};
++
++
++struct PaneRule {
++    const char* name;  // pane name; a trailing '*' matches a prefix
++    Category category;
++    Anchor x;
++    Anchor y;
++    // With kSelf: the anchor is this far from the pane's position, in its own units (the tip of a
++    // talk window's tail, which must stay where it points whatever the scale).
++    float selfX = 0.0f;
++    float selfY = 0.0f;
++};
++
++// Root panes of each element (common.brlyt unless noted). A pane under one already scaled is left
++// alone, so naming a child too never scales it twice.
++constexpr PaneRule kRules[] = {
++    {"com_clk_nul", kClock, kMin, kMax},          // clock (origin top-left, at the corner)
++    {"com_clk_inf", kClock, kMin, kMax},          // crystals / gil / happiness under it
++    {"com_inf_win", kNotifications, kMax, kMax},  // info window, slides in at the right
++    {"com_bna", kNotifications, kMid, kMax},
++    {"com_tlk", kDialogue, kSelf, kSelf},         // speech bubble over the talking actor (origin bottom)
++    {"com_evt", kDialogue, kMid, kMid},           // event message window
++    {"rom_tlk_nul", kDialogue, kSelf, kSelf},     // chancellor's window (menu_report): its tail is at its origin
++    {"com_sys", kSystemMessages, kMid, kMid},
++    {"com_sys_2", kSystemMessages, kMid, kMid},
++    {"com_dat_nul_01", kSystemMessages, kMid, kMid},
++    {"com_dat_sys_nul", kSystemMessages, kMid, kMid},
++    {"com_scr", kSystemMessages, kMid, kMid},
++    {"ecom_sys", kSystemMessages, kMid, kMid},    // e-commerce.brlyt
++    {"ecom_alt", kSystemMessages, kMid, kMid},
++    {"bom_sys_nul", kSystemMessages, kMid, kMid}, // menu_room
++    {"ttl_dat_nul_01", kSystemMessages, kMid, kMid},  // menu_title: save slots
++    {"ttl_sys_nul", kSystemMessages, kMid, kMid},
++    {"key_nul", kKeyboard, kMid, kMid},
++    {"com_men_nul_1", kMenus, kAuto, kAuto},      // menu_build: talk window under the speaker
++    // Talk window beside the speaker (Chime's report, the chancellor's costume talk, the signboard...)
++    // and the medal window: anchored on the tip of their tail (bui_men_hge_LT2 at 14,20 and
++    // ntc_men_hge_LT at 14,8, 26x31 from their top centre), so it keeps pointing at the speaker.
++    {"com_men_nul_*", kMenus, kSelf, kSelf, 1.0f, 5.0f},
++    {"ntc_men_nul", kMenus, kSelf, kSelf, 1.0f, -7.0f},
++    {"bui_men_nul", kMenus, kAuto, kAuto},
++    {"bui_hin_nul", kMenus, kAuto, kAuto},
++    {"opn_win_nul", kMenus, kMid, kMid},          // options
++    {"ttl_men_nul", kMenus, kMid, kMid},          // menu_title
++    {"com_hlp", kHelpBar, kMid, kMin},
++    {"com_cha", kTitles, kMax, kMin},             // chapter title, origin bottom-right
++    {"com_bos_nul", kTitles, kMid, kMin},
++    {"com_hpt_nul", kGauges, kSelf, kSelf},
++    {"com_exp_nul", kGauges, kSelf, kSelf},
++    {"bom_sig_nul", kRoomBanner, kMid, kMax},     // room sign (menu_room), drawn at the top
++    {"rom_sig_nul", kRoomBanner, kMid, kMax},     // castle sign (menu_report)
++    // The tutorial hand (com_fin_L / com_fin_R), placed by the scripts next to the clock or the info
++    // window: it follows the element it points at (same category and anchor), see the wrapper.
++    {"com_fin_*", kCategoryCount, kAuto, kAuto},
++};
++constexpr size_t kRuleCount = sizeof(kRules) / sizeof(kRules[0]);
++
++constexpr uint32_t kPaneCalculateMtx = 0x801CF6A8u;
++
++std::atomic<float> g_scale[kCategoryCount] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
++static_assert(kCategoryCount == 10, "one 1.0f per category above");
++std::atomic<bool> g_anyScaled{false};
++int g_scaledDepth = 0;            // > 0 while inside a scaled pane (game thread only)
++bool g_logged[kRuleCount] = {};
++
++float ReadF32(uint32_t address) {
++    const uint32_t bits = Memory::Read32(address);
++    float value;
++    std::memcpy(&value, &bits, sizeof(value));
++    return value;
++}
++
++void WriteF32(uint32_t address, float value) {
++    uint32_t bits;
++    std::memcpy(&bits, &value, sizeof(bits));
++    Memory::Write32(address, bits);
++}
++
++int FindRule(uint32_t pane) {
++    char name[17];
++    for (uint32_t i = 0; i < 16; i += 4) {
++        const uint32_t word = Memory::Read32(pane + 0xBCu + i);
++        name[i] = static_cast<char>(word >> 24);
++        name[i + 1] = static_cast<char>(word >> 16);
++        name[i + 2] = static_cast<char>(word >> 8);
++        name[i + 3] = static_cast<char>(word);
++    }
++    name[16] = '\0';
++    const std::string_view paneName(name, std::strlen(name));
++    for (size_t i = 0; i < kRuleCount; ++i) {
++        const std::string_view rule(kRules[i].name);
++        if (!rule.empty() && rule.back() == '*') {
++            if (paneName.substr(0, rule.size() - 1) == rule.substr(0, rule.size() - 1)) return static_cast<int>(i);
++        } else if (paneName == rule) {
++            return static_cast<int>(i);
++        }
++    }
++    return -1;
++}
++
++// x and y of the 3x4 matrix at address (rows of 4 floats) applied to a point.
++struct Affine2D {
++    float a, b, tx, c, d, ty;  // x' = a x + b y + tx, y' = c x + d y + ty
++};
++
++Affine2D ReadAffine(uint32_t matrix) {
++    return {ReadF32(matrix + 0x00u), ReadF32(matrix + 0x04u), ReadF32(matrix + 0x0Cu),
++            ReadF32(matrix + 0x10u), ReadF32(matrix + 0x14u), ReadF32(matrix + 0x1Cu)};
++}
++
++float Pick(Anchor anchor, float low, float high, float position) {
++    switch (anchor) {
++    case kMin: return low;
++    case kMax: return high;
++    case kAuto: {
++        const float third = (high - low) / 3.0f;
++        if (position < low + third) return low;
++        if (position > high - third) return high;
++        return (low + high) * 0.5f;
++    }
++    default: return (low + high) * 0.5f;
++    }
++}
++
++} // namespace
++
++int LifeKing_HLE_UiScaleCategoryCount() { return kCategoryCount; }
++const char* LifeKing_HLE_UiScaleCategoryKey(int category) {
++    return category >= 0 && category < kCategoryCount ? kCategories[category].key : "";
++}
++const char* LifeKing_HLE_UiScaleCategoryLabel(int category) {
++    return category >= 0 && category < kCategoryCount ? kCategories[category].label : "";
++}
++const char* LifeKing_HLE_UiScaleCategoryHint(int category) {
++    return category >= 0 && category < kCategoryCount ? kCategories[category].hint : "";
++}
++
++void LifeKing_HLE_SetUiScale(int category, float scale) {
++    if (category < 0 || category >= kCategoryCount || !std::isfinite(scale)) return;
++    g_scale[category].store(scale, std::memory_order_relaxed);
++    bool any = false;
++    for (const auto& value : g_scale) any = any || value.load(std::memory_order_relaxed) != 1.0f;
++    g_anyScaled.store(any, std::memory_order_relaxed);
++}
++
++namespace {
++
++// The help line's dark band (com_hlp_bas, 640 wide in common.brlyt) is as wide as a 4:3 screen; in
++// 16:9 the UI screen is 844 wide and the band stopped short of both sides. Its width is set to the
++// whole screen (in its own space, so it stays right whatever the help bar's scale). Not put back: the
++// width is read when the pane is drawn, after this call.
++void StretchHelpBand(uint32_t pane) {
++    const float halfWidth = GX_HLE_UiOrthoHalfWidth();
++    if (!(halfWidth > 0.0f)) return;
++    const uint32_t parent = Memory::Read32(pane + 0x0Cu);
++    if (parent == 0) return;
++    const float parentScale = ReadF32(parent + 0x84u);  // x scale of the parent's global matrix
++    const float ownScale = ReadF32(pane + 0x44u);
++    if (!(parentScale > 0.0f) || !(ownScale > 0.0f)) return;
++    const float width = 2.0f * halfWidth / (parentScale * ownScale) + 4.0f;
++    if (width > ReadF32(pane + 0x4Cu)) WriteF32(pane + 0x4Cu, width);
++}
++
++bool IsNamed(uint32_t pane, const char* name) {
++    char buffer[17];
++    for (uint32_t i = 0; i < 16; ++i) buffer[i] = static_cast<char>(Memory::Read8(pane + 0xBCu + i));
++    buffer[16] = '\0';
++    return std::strcmp(buffer, name) == 0;
++}
++
++// 3D models in menus (script MenuModel: the house of the building menu): their pane (vtable
++// 0x8028149C, model object at +0xD8, drawn by 0x800C1FC0) is placed on screen by the scripts in screen
++// units, not through the pane tree, so a shrunk menu left the house where it was. For each model
++// inside a scaled element, the element's anchor and scale are kept for its draw (LifeKing_DrawMenuModel).
++constexpr uint32_t kModelPaneVtable = 0x8028149Cu;
++struct ScreenRemap {
++    float anchorX, anchorY, scale;  // view space
++};
++std::unordered_map<uint32_t, ScreenRemap> g_modelRemaps;
++ScreenRemap g_currentRemap{0.0f, 0.0f, 1.0f};
++uint32_t g_frame = 0;
++uint32_t g_mapShownFrame = 0xFFFFFFF0u;  // last frame the quest map (map_bas) was drawn
++uint32_t g_reportShownFrame = 0xFFFFFFF0u;  // last frame the castle's report room (rom_bg_nul) was drawn
++
++void NoteModelPane(uint32_t pane, bool scaled) {
++    if (Memory::Read32(pane) != kModelPaneVtable) return;
++    const uint32_t model = Memory::Read32(pane + 0xD8u);
++    if (model == 0) return;
++    if (scaled) g_modelRemaps[model] = g_currentRemap;
++    else g_modelRemaps.erase(model);
++}
++
++} // namespace
++
++extern "C" void LifeKing_PaneCalculateMtx(CpuContext* ctx) {
++    if (g_scaledDepth > 0 || !g_anyScaled.load(std::memory_order_relaxed)) {
++        NoteModelPane(ctx->gpr[3], g_scaledDepth > 0);
++        // The band is a child of the help bar, so it is reached here (inside it, or with no scale).
++        if (Memory::Read32(ctx->gpr[3] + 0xBCu) == 0x636F6D5Fu /* "com_" */ && IsNamed(ctx->gpr[3], "com_hlp_bas")) {
++            StretchHelpBand(ctx->gpr[3]);
++        }
++        GuestFunctions::BaseTranslation(kPaneCalculateMtx)(ctx);
++        return;
++    }
++    const uint32_t pane = ctx->gpr[3];
++    const uint32_t drawInfo = ctx->gpr[4];
++    const int ruleIndex = FindRule(pane);
++    if (ruleIndex < 0) {
++        NoteModelPane(pane, false);
++        GuestFunctions::BaseTranslation(kPaneCalculateMtx)(ctx);
++        return;
++    }
++    PaneRule rule = kRules[ruleIndex];
++
++    // The screen, in view space.
++    float left = ReadF32(drawInfo + 0x34u), top = ReadF32(drawInfo + 0x38u);
++    float right = ReadF32(drawInfo + 0x3Cu), bottom = ReadF32(drawInfo + 0x40u);
++    const bool rectOk = std::isfinite(left) && std::isfinite(right) && std::isfinite(top) && std::isfinite(bottom) &&
++                        right > left && top != bottom;
++    if (!rectOk) {
++        left = -320.0f; right = 320.0f; top = 224.0f; bottom = -224.0f;
++    }
++    const float yLow = std::fmin(top, bottom), yHigh = std::fmax(top, bottom);
++
++    // The parent's space (where translate lives) from view space.
++    const uint32_t parent = Memory::Read32(pane + 0x0Cu);
++    const Affine2D m = ReadAffine(parent != 0 ? parent + 0x84u : drawInfo + 0x04u);
++    const float det = m.a * m.d - m.b * m.c;
++    const float tx = ReadF32(pane + 0x2Cu), ty = ReadF32(pane + 0x30u);
++    const float px = m.a * tx + m.b * ty + m.tx;  // where the pane is on screen
++    const float py = m.c * tx + m.d * ty + m.ty;
++
++    if (rule.category == kCategoryCount) {
++        // The tutorial hand: in the top third it points at the clock (left) or the info window
++        // (right); elsewhere, or on the quest map (which is not scaled), it is left alone.
++        // Nor in the castle's reports (Liara): the hand stays at the game's size there.
++        const bool onMap = g_frame - g_mapShownFrame <= 2u || g_frame - g_reportShownFrame <= 2u;
++        if (!onMap && py > yHigh - (yHigh - yLow) / 3.0f) {
++            rule = px < (left + right) * 0.5f ? PaneRule{rule.name, kClock, kMin, kMax}
++                                               : PaneRule{rule.name, kNotifications, kMax, kMax};
++        } else {
++            GuestFunctions::BaseTranslation(kPaneCalculateMtx)(ctx);
++            return;
++        }
++    }
++    const float scale = g_scale[rule.category].load(std::memory_order_relaxed);
++    if (scale == 1.0f || std::fabs(det) <= 1e-12f) {
++        GuestFunctions::BaseTranslation(kPaneCalculateMtx)(ctx);
++        return;
++    }
++
++    const float sx = ReadF32(pane + 0x44u), sy = ReadF32(pane + 0x48u);
++    float newTx = tx, newTy = ty;
++    {
++        // The centre of the pane's box, for kBox: from its origin (+0xBA: column + 3 * row, column 0 left,
++        // row 0 top) and size (+0x4C, +0x50), in the parent's space.
++        const uint8_t origin = Memory::Read8(pane + 0xBAu);
++        const float boxX = tx + (1.0f - static_cast<float>(origin % 3u)) * 0.5f * ReadF32(pane + 0x4Cu) * sx;
++        const float boxY = ty - (1.0f - static_cast<float>(origin / 3u)) * 0.5f * ReadF32(pane + 0x50u) * sy;
++        const float bx = m.a * boxX + m.b * boxY + m.tx;
++        const float by = m.c * boxX + m.d * boxY + m.ty;
++        const float selfX = tx + rule.selfX * sx, selfY = ty + rule.selfY * sy;
++        const float qx = m.a * selfX + m.b * selfY + m.tx;  // the kSelf point on screen
++        const float qy = m.c * selfX + m.d * selfY + m.ty;
++        const float ax = rule.x == kSelf ? qx : rule.x == kBox ? bx : Pick(rule.x, left, right, px);
++        const float ay = rule.y == kSelf ? qy : rule.y == kBox ? by : Pick(rule.y, yLow, yHigh, py);
++        g_currentRemap = {ax, ay, scale};
++        // Back into the parent's space.
++        const float dx = ax - m.tx, dy = ay - m.ty;
++        const float lx = (m.d * dx - m.b * dy) / det;
++        const float ly = (-m.c * dx + m.a * dy) / det;
++        newTx = lx + (tx - lx) * scale;
++        newTy = ly + (ty - ly) * scale;
++        if (!g_logged[ruleIndex]) {
++            g_logged[ruleIndex] = true;
++            RT_LOGF("lifeking", "ui scale %s (%s) x%.2f: rect %.0f,%.0f..%.0f,%.0f%s, parent %s scale %.2f,%.2f, "
++                    "at %.0f,%.0f on screen, anchor %.0f,%.0f, ui screen half width %.0f\n",
++                    rule.name, kCategories[rule.category].key, scale, left, yHigh, right, yLow,
++                    rectOk ? "" : " (default)", parent != 0 ? "pane" : "view", m.a, m.d, px, py, ax, ay,
++                    GX_HLE_UiOrthoHalfWidth());
++        }
++    }
++
++    WriteF32(pane + 0x2Cu, newTx);
++    WriteF32(pane + 0x30u, newTy);
++    WriteF32(pane + 0x44u, sx * scale);
++    WriteF32(pane + 0x48u, sy * scale);
++    ++g_scaledDepth;
++    GuestFunctions::BaseTranslation(kPaneCalculateMtx)(ctx);
++    --g_scaledDepth;
++    WriteF32(pane + 0x2Cu, tx);
++    WriteF32(pane + 0x30u, ty);
++    WriteF32(pane + 0x44u, sx);
++    WriteF32(pane + 0x48u, sy);
++}
++FOREIGN_GAME_WRAPPER(WFCPGD, 801CF6A8, LifeKing_PaneCalculateMtx);
++
++// --- Icons over characters ---------------------------------------------------------------------------
++// The "!", smiley and other icons over characters are 3D models (script ActorIcon), scaled by the
++// scripts through WorldEngine::setObjectScale (0x8003A438: r3 engine, r4 object id, f1-f3 x/y/z) right
++// after each is placed (setObjectPosition 0x80035A48, same registers), 1 normally and 3 in the top
++// view. The data patch (make_fps60_scripts.py) makes ActorIcon.setScale pass -x, which marks the call
++// as an icon's: the scale is made positive again and multiplied by the "Over characters" setting.
++// The icons are centred on their position (icon.brres: the bubble is -0.5..0.5 high), so a smaller
++// one is moved down by what it lost, which keeps its bottom (the point over the head) in place.
++// A change in F10 is applied to the icons already shown at the next frame (LifeKing_UiScaleFrame).
++namespace {
++constexpr uint32_t kSetObjectScale = 0x8003A438u;
++constexpr uint32_t kSetObjectPosition = 0x80035A48u;
++constexpr double kIconHalfHeight = 0.5;
++struct IconState {
++    float asked = 1.0f;  // the scale the scripts asked for
++    double x = 0.0, y = 0.0, z = 0.0;
++    bool placed = false;
++};
++uint32_t g_worldEngine = 0;
++std::unordered_map<uint32_t, IconState> g_icons;  // object id -> icon
++float g_iconAppliedScale = 1.0f;
++struct LastPosition {
++    uint32_t id = 0xFFFFFFFFu;
++    double x = 0.0, y = 0.0, z = 0.0;
++} g_lastPosition;
++
++double IconY(const IconState& icon, float scale) {
++    return icon.y - kIconHalfHeight * icon.asked * (1.0 - scale);
++}
++
++void CallSetObjectPosition(CpuContext* ctx, uint32_t id, const IconState& icon, float scale) {
++    const CpuContext saved = *ctx;
++    ctx->gpr[3] = g_worldEngine;
++    ctx->gpr[4] = id;
++    ctx->fpr[1].d = icon.x;
++    ctx->fpr[2].d = IconY(icon, scale);
++    ctx->fpr[3].d = icon.z;
++    GuestFunctions::BaseTranslation(kSetObjectPosition)(ctx);
++    *ctx = saved;
++}
++} // namespace
++
++extern "C" void LifeKing_SetObjectPosition(CpuContext* ctx) {
++    const uint32_t id = ctx->gpr[4];
++    g_lastPosition = {id, ctx->fpr[1].d, ctx->fpr[2].d, ctx->fpr[3].d};
++    const auto it = g_icons.find(id);
++    if (it != g_icons.end()) {
++        IconState& icon = it->second;
++        icon.x = ctx->fpr[1].d;
++        icon.y = ctx->fpr[2].d;
++        icon.z = ctx->fpr[3].d;
++        icon.placed = true;
++        ctx->fpr[2].d = IconY(icon, g_scale[kGauges].load(std::memory_order_relaxed));
++    }
++    GuestFunctions::BaseTranslation(kSetObjectPosition)(ctx);
++}
++FOREIGN_GAME_WRAPPER(WFCPGD, 80035A48, LifeKing_SetObjectPosition);
++
++extern "C" void LifeKing_SetObjectScale(CpuContext* ctx) {
++    const uint32_t id = ctx->gpr[4];
++    if (ctx->fpr[1].d >= 0.0) {
++        g_icons.erase(id);  // that id is not (or no longer) an icon
++        GuestFunctions::BaseTranslation(kSetObjectScale)(ctx);
++        return;
++    }
++    const float asked = static_cast<float>(-ctx->fpr[1].d);
++    const float scale = g_scale[kGauges].load(std::memory_order_relaxed);
++    g_worldEngine = ctx->gpr[3];
++    IconState& icon = g_icons[id];
++    icon.asked = asked;
++    if (g_lastPosition.id == id) {  // placed just before (ActorIcon: setPosition, then setScale)
++        icon.x = g_lastPosition.x;
++        icon.y = g_lastPosition.y;
++        icon.z = g_lastPosition.z;
++        icon.placed = true;
++    }
++    ctx->fpr[1].d = asked * scale;
++    ctx->fpr[2].d = ctx->fpr[2].d * scale;
++    ctx->fpr[3].d = ctx->fpr[3].d * scale;
++    GuestFunctions::BaseTranslation(kSetObjectScale)(ctx);
++    if (icon.placed) CallSetObjectPosition(ctx, id, icon, scale);
++}
++FOREIGN_GAME_WRAPPER(WFCPGD, 8003A438, LifeKing_SetObjectScale);
++
++void LifeKing_UiScaleFrame(CpuContext* ctx) {
++    ++g_frame;
++    const float scale = g_scale[kGauges].load(std::memory_order_relaxed);
++    if (scale == g_iconAppliedScale) return;
++    g_iconAppliedScale = scale;
++    if (g_worldEngine == 0 || g_icons.empty()) return;
++    const CpuContext saved = *ctx;
++    for (const auto& [id, icon] : g_icons) {
++        ctx->gpr[3] = g_worldEngine;
++        ctx->gpr[4] = id;
++        ctx->fpr[1].d = ctx->fpr[2].d = ctx->fpr[3].d = icon.asked * scale;
++        GuestFunctions::BaseTranslation(kSetObjectScale)(ctx);
++        *ctx = saved;
++        if (icon.placed) CallSetObjectPosition(ctx, id, icon, scale);
++    }
++}
++
++// --- 3D models drawn in menus ------------------------------------------------------------------------
++// The rooms (the castle with Chime and the chancellor, the signboards, shops...) draw their characters
++// as 3D models attached to a pane (script MenuModel), with a camera of their own: the model pane's draw
++// 0x800C1FC0 updates and draws a g3d scene. The F10 field of view is meant for the world camera and
++// made them look stretched, so the game's own field of view is kept for the length of that draw.
++// Inside a shrunk menu, the model also follows the menu on screen (see NoteModelPane).
++extern "C" void LifeKing_DrawMenuModel(CpuContext* ctx) {
++    const auto it = g_modelRemaps.find(ctx->gpr[3]);
++    const float halfWidth = GX_HLE_UiOrthoHalfWidth();
++    const bool remap = it != g_modelRemaps.end() && it->second.scale != 1.0f && halfWidth > 0.0f;
++    if (remap) GX_HLE_SetScreenRemap(true, it->second.anchorX / halfWidth, it->second.anchorY / 224.0f, it->second.scale);
++    GX_HLE_SuppressFieldOfView(true);
++    GuestFunctions::BaseTranslation(0x800C1FC0u)(ctx);
++    GX_HLE_SuppressFieldOfView(false);
++    if (remap) GX_HLE_SetScreenRemap(false, 0.0f, 0.0f, 1.0f);
++}
++
++// nw4r::lyt::Pane::Draw (0x801CF9A0), which draws only visible panes: tells when the quest map is
++// on screen (map_bas, map.brlyt), for the tutorial hand.
++extern "C" void LifeKing_PaneDraw(CpuContext* ctx) {
++    const uint32_t pane = ctx->gpr[3];
++    if (Memory::Read32(pane + 0xBCu) == 0x6D61705Fu /* "map_" */ && (Memory::Read8(pane + 0xBBu) & 1u) != 0 &&
++        IsNamed(pane, "map_bas")) {
++        g_mapShownFrame = g_frame;
++    } else if (Memory::Read32(pane + 0xBCu) == 0x726F6D5Fu /* "rom_" */ && (Memory::Read8(pane + 0xBBu) & 1u) != 0 &&
++               IsNamed(pane, "rom_bg_nul")) {
++        g_reportShownFrame = g_frame;
++    }
++    GuestFunctions::BaseTranslation(0x801CF9A0u)(ctx);
++}
++FOREIGN_GAME_WRAPPER(WFCPGD, 801CF9A0, LifeKing_PaneDraw);
++FOREIGN_GAME_WRAPPER(WFCPGD, 800C1FC0, LifeKing_DrawMenuModel);
 diff --git a/runtime/src/hle/os/os_interrupt.cpp b/runtime/src/hle/os/os_interrupt.cpp
 index 56f6871..7eea5ac 100644
 --- a/runtime/src/hle/os/os_interrupt.cpp
@@ -13370,7 +14051,7 @@ index 926372f..3169452 100644
      return descriptor;
  }
 diff --git a/runtime/src/settings_overlay.cpp b/runtime/src/settings_overlay.cpp
-index 6c2083a..7471b40 100644
+index 6c2083a..cf954ee 100644
 --- a/runtime/src/settings_overlay.cpp
 +++ b/runtime/src/settings_overlay.cpp
 @@ -1,4 +1,9 @@
@@ -13416,16 +14097,21 @@ index 6c2083a..7471b40 100644
      default:
          return 0;
      }
-@@ -115,7 +126,7 @@ bool g_vsync = RuntimeConfigFile::Vsync();
+@@ -114,8 +125,12 @@ bool g_skipUnreadyPipelines = RuntimeConfigFile::SkipUnreadyPipelines(true);
+ bool g_vsync = RuntimeConfigFile::Vsync();
  bool g_disableCopyFilter = RuntimeConfigFile::DisableCopyFilter(true);
  bool g_showFps = RuntimeConfigFile::ShowFps(true);
++bool g_maxDetail = RuntimeConfigFile::MaxDetail(true);
++// UI scale per category (My Life as a King), in percent, filled by InitializeRuntimeSettings.
++constexpr int kMaxUiScaleCategories = 16;
++int g_uiScalePercent[kMaxUiScaleCategories] = {};
  bool g_forceAspect = RuntimeConfigFile::ForceAspectEnabled();
 -bool g_widescreen = RuntimeConfigFile::WidescreenEnabled(true);
 +bool g_widescreen = RuntimeConfigFile::WidescreenEnabled(!GuestRegion::IsForeignGame());
  #if defined(__APPLE__)
  bool g_metalFxSpatialUpscaling = RuntimeConfigFile::MetalFxSpatialUpscaling(false);
  #endif
-@@ -177,12 +188,14 @@ Clock::time_point g_bootShaderWaitStart{};
+@@ -177,12 +192,14 @@ Clock::time_point g_bootShaderWaitStart{};
  constexpr uint32_t kBootShaderNoticeThreshold = 100;
  constexpr auto kBootShaderWaitLimit = std::chrono::minutes(3);
  
@@ -13443,7 +14129,7 @@ index 6c2083a..7471b40 100644
  
  bool IsHighResolutionScale(float scale) {
      return std::fabs(scale - 6.0f) < 0.001f || std::fabs(scale - 8.0f) < 0.001f;
-@@ -435,7 +448,19 @@ const char* KeyBindingName(int scancode) {
+@@ -435,7 +452,19 @@ const char* KeyBindingName(int scancode) {
      }
  }
  
@@ -13464,7 +14150,7 @@ index 6c2083a..7471b40 100644
  struct RebindState {
      bool active = false;
      bool openPopup = false;
-@@ -467,7 +492,7 @@ void BeginRebind(RebindKind kind, uint16_t target, const char* label, bool secon
+@@ -467,7 +496,7 @@ void BeginRebind(RebindKind kind, uint16_t target, const char* label, bool secon
      std::copy_n(keys, std::min(count, static_cast<int>(g_rebind.keys.size())), g_rebind.keys.begin());
      g_rebind.mouse = SDL_GetMouseState(nullptr, nullptr);
      const int index = PADGetIndexForPort(g_rebind.port);
@@ -13473,7 +14159,7 @@ index 6c2083a..7471b40 100644
          if (auto* pad = PADGetSDLGamepadForIndex(index)) {
              g_rebind.instance = SDL_GetGamepadID(pad);
              for (int i = 0; i < SDL_GAMEPAD_BUTTON_COUNT; ++i)
-@@ -480,6 +505,18 @@ void BeginRebind(RebindKind kind, uint16_t target, const char* label, bool secon
+@@ -480,6 +509,18 @@ void BeginRebind(RebindKind kind, uint16_t target, const char* label, bool secon
  
  void CompleteRebind(uint32_t value) {
      const auto& capture = g_rebind;
@@ -13492,7 +14178,7 @@ index 6c2083a..7471b40 100644
      if (capture.kind == RebindKind::Controller) {
          const int index = PADGetIndexForPort(capture.port);
          auto* pad = index >= 0 ? PADGetSDLGamepadForIndex(index) : nullptr;
-@@ -526,9 +563,9 @@ void DrawRebindPrompt() {
+@@ -526,9 +567,9 @@ void DrawRebindPrompt() {
      }
      if (g_rebind.active) {
          ImGui::Text("Rebind: %s", g_rebind.label.c_str());
@@ -13504,7 +14190,7 @@ index 6c2083a..7471b40 100644
                  ? "Press a keyboard key."
                  : "Press a keyboard key or click a mouse button.");
          ImGui::TextUnformatted("Release any held input first. Backspace or Delete clears the mapping.");
-@@ -541,9 +578,9 @@ void DrawRebindPrompt() {
+@@ -541,9 +582,9 @@ void DrawRebindPrompt() {
          // UI clicks must not become mouse bindings (buttons activate on release).
          const bool overControl = ImGui::IsAnyItemHovered();
          if (g_rebind.active && (clear || remaining <= 0.0f)) {
@@ -13516,7 +14202,7 @@ index 6c2083a..7471b40 100644
              int count = 0;
              const bool* keys = SDL_GetKeyboardState(&count);
              for (int i = 1; i < std::min(count, static_cast<int>(SDL_SCANCODE_COUNT)) && g_rebind.active; ++i) {
-@@ -553,9 +590,10 @@ void DrawRebindPrompt() {
+@@ -553,9 +594,10 @@ void DrawRebindPrompt() {
              const uint32_t mouse = SDL_GetMouseState(nullptr, nullptr);
              for (int i = 1; i <= 5 && g_rebind.active; ++i)
                  if (!overControl && g_rebind.kind != RebindKind::MuteHotkey &&
@@ -13528,7 +14214,7 @@ index 6c2083a..7471b40 100644
              auto* pad = SDL_GetGamepadFromID(g_rebind.instance);
              if (pad != nullptr) {
                  for (int i = 0; i < SDL_GAMEPAD_BUTTON_COUNT && g_rebind.active; ++i) {
-@@ -586,17 +624,26 @@ void DrawKeyBinding(const char* label, int scancode, RebindKind kind, uint16_t t
+@@ -586,17 +628,26 @@ void DrawKeyBinding(const char* label, int scancode, RebindKind kind, uint16_t t
  }
  
  void ApplyKeyboardPreset(uint32_t port) {
@@ -13561,7 +14247,7 @@ index 6c2083a..7471b40 100644
      };
      uint32_t axisCount = 0;
      auto* mappings = PADGetKeyAxisBindings(port, &axisCount);
-@@ -625,11 +672,16 @@ void SetKeyboardActive(uint32_t port, bool active) {
+@@ -625,11 +676,16 @@ void SetKeyboardActive(uint32_t port, bool active) {
  
  void DrawKeyboardSettings(uint32_t port) {
      PushMenuTextWrap();
@@ -13580,7 +14266,7 @@ index 6c2083a..7471b40 100644
      uint32_t count = 0;
      auto* buttons = PADGetKeyButtonBindings(port, &count);
      ImGui::SeparatorText("Buttons");
-@@ -727,6 +779,37 @@ void DrawExpressionSettings() {
+@@ -727,6 +783,37 @@ void DrawExpressionSettings() {
      }
  }
  
@@ -13618,7 +14304,7 @@ index 6c2083a..7471b40 100644
  void DrawRumbleSettings() {
      ImGui::Separator();
      if (ImGui::Checkbox("Controller vibration", &g_rumbleEnabled)) {
-@@ -1064,6 +1147,7 @@ void DrawControllerSettings() {
+@@ -1064,6 +1151,7 @@ void DrawControllerSettings() {
      ImGui::Spacing();
      controller_mapping_wizard::DrawSetupList();
      DrawWiiRemoteSetup();
@@ -13626,7 +14312,7 @@ index 6c2083a..7471b40 100644
      DrawRumbleSettings();
  }
  
-@@ -1074,22 +1158,25 @@ void DrawAudioSettings() {
+@@ -1074,22 +1162,25 @@ void DrawAudioSettings() {
          AudioBackend::Instance().SetMasterVolume(volume);
          RuntimeConfigFile::SetAudioVolume(volume);
      }
@@ -13656,7 +14342,7 @@ index 6c2083a..7471b40 100644
          const float volume = static_cast<float>(g_voicesVolumePercent) / 100.0f;
          MusicAttenuation::SetVoicesVolume(volume);
          RuntimeConfigFile::SetVoicesVolume(volume);
-@@ -1114,6 +1201,9 @@ void DrawAudioSettings() {
+@@ -1114,6 +1205,9 @@ void DrawAudioSettings() {
              "Runs the AX/DSP voice mix off the game thread. Turn this off if you "
              "suspect an audio problem; the mix then runs inline as it used to.");
      }
@@ -13666,7 +14352,7 @@ index 6c2083a..7471b40 100644
      ImGui::Separator();
      if (ImGui::Checkbox("Mute game music while external media is playing",
                          &g_attenuateMusicWhenMediaPlays)) {
-@@ -1144,24 +1234,145 @@ void DrawAudioSettings() {
+@@ -1144,24 +1238,180 @@ void DrawAudioSettings() {
      }
  }
  
@@ -13724,10 +14410,7 @@ index 6c2083a..7471b40 100644
 +            if (isSelected) {
 +                ImGui::SetItemDefaultFocus();
 +            }
-         }
--        if (ImGui::Selectable("4:3", !g_widescreen)) {
--            g_widescreen = false;
--            RuntimeConfigFile::SetWidescreen(false);
++        }
 +        ImGui::EndCombo();
 +    }
 +    if (selected != atLaunch) {
@@ -13756,7 +14439,10 @@ index 6c2083a..7471b40 100644
 +            if (saved == kChoices[i].configName) {
 +                return static_cast<int>(i);
 +            }
-+        }
+         }
+-        if (ImGui::Selectable("4:3", !g_widescreen)) {
+-            g_widescreen = false;
+-            RuntimeConfigFile::SetWidescreen(false);
 +        return 0;
 +    }();
 +    static const int atLaunch = selected;
@@ -13781,6 +14467,41 @@ index 6c2083a..7471b40 100644
 +    if (selected != atLaunch) {
 +        ImGui::TextDisabled("Saved. Restart the game to apply it.");
 +    }
++}
++
++// One slider per kind of on-screen element (lifeking_ui_scale.cpp), 50-100% in steps of 5. Live.
++void DrawUiScaleSettings() {
++    ImGui::Separator();
++    if (!ImGui::TreeNodeEx("UI scale", ImGuiTreeNodeFlags_DefaultOpen)) return;
++    const int count = std::min(LifeKing_HLE_UiScaleCategoryCount(), kMaxUiScaleCategories);
++    const int minPercent = static_cast<int>(std::lround(RuntimeConfigFile::kMinUiScale * 100.0f));
++    const int maxPercent = static_cast<int>(std::lround(RuntimeConfigFile::kMaxUiScale * 100.0f));
++    bool anyChanged = false;
++    for (int i = 0; i < count; ++i) {
++        ImGui::PushID(i);
++        int& percent = g_uiScalePercent[i];
++        if (ImGui::SliderInt(LifeKing_HLE_UiScaleCategoryLabel(i), &percent, minPercent, maxPercent, "%d%%",
++                             ImGuiSliderFlags_AlwaysClamp)) {
++            percent = (percent + 2) / 5 * 5;
++            LifeKing_HLE_SetUiScale(i, static_cast<float>(percent) / 100.0f);
++        }
++        if (ImGui::IsItemDeactivatedAfterEdit()) {
++            RuntimeConfigFile::SetUiScale(LifeKing_HLE_UiScaleCategoryKey(i), static_cast<float>(percent) / 100.0f);
++        }
++        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", LifeKing_HLE_UiScaleCategoryHint(i));
++        anyChanged = anyChanged || percent != 100;
++        ImGui::PopID();
++    }
++    if (ImGui::SmallButton("Reset all##uiscale") && anyChanged) {
++        for (int i = 0; i < count; ++i) {
++            if (g_uiScalePercent[i] == 100) continue;
++            g_uiScalePercent[i] = 100;
++            LifeKing_HLE_SetUiScale(i, 1.0f);
++            RuntimeConfigFile::SetUiScale(LifeKing_HLE_UiScaleCategoryKey(i), 1.0f);
++        }
++    }
++    ImGui::TextDisabled("100%% is the game's own size. Corner and edge elements stay in place.");
++    ImGui::TreePop();
 +}
 +
 +void DrawGraphicsSettings() {
@@ -13825,7 +14546,7 @@ index 6c2083a..7471b40 100644
      ImGui::Separator();
      struct EffectFlag {
          const char* label;
-@@ -1172,6 +1383,9 @@ void DrawGraphicsSettings() {
+@@ -1172,6 +1422,9 @@ void DrawGraphicsSettings() {
      }};
  
      for (const auto& effect : kEffectFlags) {
@@ -13835,7 +14556,7 @@ index 6c2083a..7471b40 100644
          bool disabled = (g_disabledPostProcessingPaths & effect.flag) != 0;
          if (ImGui::Checkbox(effect.label, &disabled)) {
              if (disabled) {
-@@ -1183,8 +1397,10 @@ void DrawGraphicsSettings() {
+@@ -1183,8 +1436,10 @@ void DrawGraphicsSettings() {
              RuntimeConfigFile::SetDisabledPostProcessingPaths(g_disabledPostProcessingPaths);
          }
      }
@@ -13848,7 +14569,7 @@ index 6c2083a..7471b40 100644
      static constexpr const char* kDisplayModes[] = {
          "Windowed",
          "Borderless fullscreen",
-@@ -1205,13 +1421,13 @@ void DrawGraphicsSettings() {
+@@ -1205,13 +1460,13 @@ void DrawGraphicsSettings() {
              "Requests the closest native-resolution display mode to the output frame "
              "rate (60 Hz, or the frame interpolation target).");
      }
@@ -13865,7 +14586,7 @@ index 6c2083a..7471b40 100644
          for (int mode = 0; mode < static_cast<int>(kFrameInterpolationModes.size()); ++mode) {
              const bool selected = g_frameInterpolationMode == mode;
              if (ImGui::Selectable(kFrameInterpolationModes[static_cast<size_t>(mode)], selected)) {
-@@ -1286,7 +1502,30 @@ void DrawGraphicsSettings() {
+@@ -1286,7 +1541,38 @@ void DrawGraphicsSettings() {
          RuntimeConfigFile::SetShowFps(g_showFps);
      }
      ImGui::Separator();
@@ -13887,6 +14608,14 @@ index 6c2083a..7471b40 100644
 +        RuntimeConfigFile::SetFieldOfView(1.0f);
 +    }
 +    ImGui::TextDisabled("100%% is the game's own view. Above widens it, below narrows it.");
++    if (GuestRegion::IsForeignGame()) {
++        if (ImGui::Checkbox("Max detail (LOD)", &g_maxDetail)) {
++            LifeKing_HLE_SetMaxDetail(g_maxDetail);
++            RuntimeConfigFile::SetMaxDetail(g_maxDetail);
++        }
++        ImGui::TextDisabled("Characters and buildings always use their most detailed models.");
++        DrawUiScaleSettings();
++    }
 +    // Fast loading (black screens between areas go by faster) is always on. Holding a key or
 +    // button to fast-forward everything is chosen in the Controls part (DrawFastForwardSettings).
 +    ImGui::Separator();
@@ -13897,7 +14626,7 @@ index 6c2083a..7471b40 100644
  }
  
  void DrawFpsOverlay() {
-@@ -1390,7 +1629,7 @@ void DrawStartupScreen() {
+@@ -1390,7 +1676,7 @@ void DrawStartupScreen() {
                                          ImGuiWindowFlags_NoBringToFrontOnFocus;
      if (ImGui::Begin("Wiicompiled Startup", nullptr, kFlags)) {
          ImGui::SetWindowFontScale(1.25f);
@@ -13906,7 +14635,7 @@ index 6c2083a..7471b40 100644
          const ImVec2 titleSize = ImGui::CalcTextSize(kTitle);
          const float titleX = std::max(0.0f, (viewport->Size.x - titleSize.x) * 0.5f);
          const float startY = std::max(0.0f, (viewport->Size.y - titleSize.y) * 0.5f);
-@@ -1485,7 +1724,7 @@ void DrawTopBar() {
+@@ -1485,7 +1771,7 @@ void DrawTopBar() {
      ImGui::End();
      if (!ImGui::BeginMainMenuBar()) return;
  
@@ -13915,7 +14644,7 @@ index 6c2083a..7471b40 100644
      ImGui::Separator();
      const auto resolutionIt = std::find_if(kResolutions.begin(), kResolutions.end(), [](const ResolutionItem& item) {
          return std::fabs(item.scale - g_resolutionScale) < 0.001f;
-@@ -1533,6 +1772,18 @@ void DrawTopBar() {
+@@ -1533,6 +1819,18 @@ void DrawTopBar() {
          ImGui::EndMenu();
      }
  
@@ -13934,15 +14663,21 @@ index 6c2083a..7471b40 100644
      const ImGuiStyle& style = ImGui::GetStyle();
      const float hideWidth = ImGui::CalcTextSize("Hide (F10)").x + style.FramePadding.x * 2.0f;
      const float exitWidth = ImGui::CalcTextSize("X").x + style.FramePadding.x * 2.0f;
-@@ -1627,6 +1878,7 @@ void InitializeRuntimeSettings() noexcept {
+@@ -1627,6 +1925,13 @@ void InitializeRuntimeSettings() noexcept {
      MusicAttenuation::SetVoicesVolume(static_cast<float>(g_voicesVolumePercent) / 100.0f);
      MusicAttenuation::SetEnabled(g_attenuateMusicWhenMediaPlays);
      RuntimeGameGraphicsOptions::SetDisabledPostProcessingPaths(g_disabledPostProcessingPaths);
 +    GX_HLE_SetFieldOfViewScale(static_cast<float>(g_fieldOfViewPercent) / 100.0f);
++    LifeKing_HLE_SetMaxDetail(g_maxDetail);
++    for (int i = 0; i < std::min(LifeKing_HLE_UiScaleCategoryCount(), kMaxUiScaleCategories); ++i) {
++        const float scale = RuntimeConfigFile::UiScale(LifeKing_HLE_UiScaleCategoryKey(i), 1.0f);
++        g_uiScalePercent[i] = static_cast<int>(std::lround(scale * 100.0f));
++        LifeKing_HLE_SetUiScale(i, scale);
++    }
  #if defined(__APPLE__)
      aurora_set_metalfx_spatial(g_metalFxSpatialUpscaling);
  #endif
-@@ -1658,11 +1910,17 @@ void HandleEvents(const AuroraEvent* events) noexcept {
+@@ -1658,11 +1963,17 @@ void HandleEvents(const AuroraEvent* events) noexcept {
              continue;
          }
          controller_mapping_wizard::HandleSdlEvent(ev->sdl);
@@ -13961,7 +14696,7 @@ index 6c2083a..7471b40 100644
          if (!g_rebind.active && IsToggleKey(ev->sdl, SDL_SCANCODE_F10)) {
              SetTopBarVisible(!g_topBarVisible);
              ApplyInputBlockState();
-@@ -1727,11 +1985,25 @@ void Draw() noexcept {
+@@ -1727,11 +2038,25 @@ void Draw() noexcept {
      DrawExitPrompt();
      DrawRestartPrompt();
      controller_mapping_wizard::Draw();
