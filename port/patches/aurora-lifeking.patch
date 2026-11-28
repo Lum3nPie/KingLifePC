@@ -18,10 +18,31 @@ index 8422b2a..6da8641 100644
  
  // When enabled, draws whose pipeline is still compiling are skipped instead of stalling.
 diff --git a/include/dolphin/gx/GXAurora.h b/include/dolphin/gx/GXAurora.h
-index 3f6a13a..3e3a1c1 100644
+index 3f6a13a..4510516 100644
 --- a/include/dolphin/gx/GXAurora.h
 +++ b/include/dolphin/gx/GXAurora.h
-@@ -169,6 +169,18 @@ typedef enum _AuroraViewportPolicy {
+@@ -78,6 +78,20 @@ extern "C" {
+ 
+ #define GX_AURORA_END_OFFSCREEN 0x003A
+ 
++/**
++ * Like GX_AURORA_BEGIN_OFFSCREEN, for a pass the game draws in its own EFB coordinates. Followed by
++ * u32 width, height (the offscreen size; 0 = the EFB's current scale) and u32 logical width, height
++ * (the size the game draws it at). Viewports, scissors and copies are scaled from the logical size,
++ * and the target starts cleared to the copy clear colour, as the EFB is after a clearing copy.
++ */
++#define GX_AURORA_BEGIN_OFFSCREEN_LOGICAL 0x0060
++
++/**
++ * Applies to the texture copies that follow, until changed: followed by an f32 Gaussian blur sigma
++ * in logical texels of the copy source (0 = none) and a u8 (1 = without the vertical copy filter).
++ */
++#define GX_AURORA_SET_COPY_OVERRIDE 0x0061
++
+ #define GX_AURORA_LOAD_TEX_POINTER 0x003B
+ 
+ #define GX_AURORA_LOAD_TLUT_POINTER 0x003C
+@@ -169,6 +183,18 @@ typedef enum _AuroraViewportPolicy {
   */
  void AuroraSetViewportPolicy(AuroraViewportPolicy policy);
  
@@ -40,7 +61,7 @@ index 3f6a13a..3e3a1c1 100644
  /**
   * Retrieves the current content framebuffer size.
   */
-@@ -179,6 +191,14 @@ void AuroraGetRenderSize(u32* width, u32* height);
+@@ -179,6 +205,14 @@ void AuroraGetRenderSize(u32* width, u32* height);
   */
  void AuroraGetSurfaceSize(u32* width, u32* height);
  
@@ -55,8 +76,21 @@ index 3f6a13a..3e3a1c1 100644
  /**
   * Marks the calling thread as the GX producer when it is not the main thread, so GX resource
   * destructions it issues stay in command-stream order.
+@@ -234,6 +268,12 @@ void GXCreateFrameBuffer(u32 width, u32 height);
+  */
+ void GXRestoreFrameBuffer(void);
+ 
++/** An offscreen framebuffer for a pass drawn in logical EFB coordinates (GX_AURORA_BEGIN_OFFSCREEN_LOGICAL). */
++void GXCreateFrameBufferLogical(u32 width, u32 height, u32 logicalWidth, u32 logicalHeight);
++
++/** Blur (sigma in logical source texels, 0 = none) and copy filter bypass for the next texture copies. */
++void GXSetCopyOverride(f32 blurSigma, GXBool noCopyFilter);
++
+ /*
+  * Asynchronous readback APIs
+  *
 diff --git a/lib/dolphin/gx/GXAurora.cpp b/lib/dolphin/gx/GXAurora.cpp
-index 0317ace..d5fb061 100644
+index 0317ace..0b12ae9 100644
 --- a/lib/dolphin/gx/GXAurora.cpp
 +++ b/lib/dolphin/gx/GXAurora.cpp
 @@ -5,6 +5,7 @@
@@ -93,6 +127,109 @@ index 0317ace..d5fb061 100644
  void AuroraGetRenderSize(u32* width, u32* height) {
    const auto windowSize = aurora::window::get_window_size();
    if (width != nullptr) {
+@@ -125,6 +138,21 @@ void GXRestoreFrameBuffer() {
+   aurora::gx::fifo::publish();
+ }
+ 
++void GXCreateFrameBufferLogical(u32 width, u32 height, u32 logicalWidth, u32 logicalHeight) {
++  GX_WRITE_AURORA(GX_AURORA_BEGIN_OFFSCREEN_LOGICAL);
++  GX_WRITE_U32(width);
++  GX_WRITE_U32(height);
++  GX_WRITE_U32(logicalWidth);
++  GX_WRITE_U32(logicalHeight);
++  aurora::gx::fifo::publish();
++}
++
++void GXSetCopyOverride(f32 blurSigma, GXBool noCopyFilter) {
++  GX_WRITE_AURORA(GX_AURORA_SET_COPY_OVERRIDE);
++  GX_WRITE_F32(blurSigma);
++  GX_WRITE_U8(noCopyFilter != GX_FALSE);
++}
++
+ AuroraReadbackStream AuroraReadbackCreateStream() { return aurora::gfx::readback::create_stream(); }
+ 
+ void AuroraReadbackDestroyStream(AuroraReadbackStream stream) { aurora::gfx::readback::destroy_stream(stream); }
+diff --git a/lib/dolphin/gx/GXFrameBuffer.cpp b/lib/dolphin/gx/GXFrameBuffer.cpp
+index fcbefaf..300105c 100644
+--- a/lib/dolphin/gx/GXFrameBuffer.cpp
++++ b/lib/dolphin/gx/GXFrameBuffer.cpp
+@@ -157,8 +157,23 @@ void copy_disp(GXBool clear, u32 copyControl) noexcept {
+ 
+ void copy_tex(const void* dest, GXBool clear, u32 copyControl) noexcept {
+   const auto rect = map_logical_scissor(g_gxState.texCopySrc);
+-  const auto [dstWidth, dstHeight] = scale_copy_dst(g_gxState.texCopyDstWidth, g_gxState.texCopyDstHeight);
++  auto [dstWidth, dstHeight] = scale_copy_dst(g_gxState.texCopyDstWidth, g_gxState.texCopyDstHeight);
+   const auto texCopyFmt = g_gxState.texCopyFmt;
++  // GXSetCopyOverride blur, in pixels of the render target. A blurred copy is made smaller, one texel
++  // per sigma: the blur takes that detail away anyway, the cost stays the same at any softness, and
++  // the bilinear filtering of whatever samples it stays smooth.
++  float blurPixels = 0.f;
++  const float blurSigma = g_gxState.texCopyBlurSigma;
++  const auto& logicalSrc = g_gxState.texCopySrc;
++  if (blurSigma > 0.f && logicalSrc.width > 0 && logicalSrc.height > 0 && !is_depth_format(texCopyFmt)) {
++    blurPixels = blurSigma * static_cast<float>(rect.width) / static_cast<float>(logicalSrc.width);
++    const auto reduced = [blurSigma](u32 size, u32 logical) {
++      const auto texels = static_cast<u32>(std::lround(static_cast<float>(logical) / std::max(blurSigma, 0.05f)));
++      return std::clamp<u32>(texels, std::min<u32>(64, size), size);
++    };
++    dstWidth = reduced(dstWidth, g_gxState.texCopyDstWidth);
++    dstHeight = reduced(dstHeight, g_gxState.texCopyDstHeight);
++  }
+   const auto copy = texture::resolve_copy_texture({
+       .dest = dest,
+       .width = dstWidth,
+@@ -182,11 +197,14 @@ void copy_tex(const void* dest, GXBool clear, u32 copyControl) noexcept {
+   gfx::resolve_pass_into(copy.handle, rect, clearColor, clearAlpha, clearDepth, g_gxState.clearColor,
+                          clear_depth_value(), texCopyFmt, g_gxState.pixelFmt,
+                          {
+-                             .copyFilter = copy_filter_taps(),
++                             .copyFilter = g_gxState.texCopyNoFilter || blurPixels > 0.f
++                                               ? std::array<u32, 3>{0, 64, 0}
++                                               : copy_filter_taps(),
+                              .copyFilterRowStride = static_cast<float>(rect.height) / std::max(src.height, 1),
+                              .clampTop = (copyControl & GX_CLAMP_TOP) != 0,
+                              .clampBottom = (copyControl & GX_CLAMP_BOTTOM) != 0,
+                              .persistent = persistent,
++                             .blurSigma = blurPixels,
+                          });
+ }
+ } // namespace aurora::gx
+diff --git a/lib/gfx/encoding.cpp b/lib/gfx/encoding.cpp
+index bc295e2..f494620 100644
+--- a/lib/gfx/encoding.cpp
++++ b/lib/gfx/encoding.cpp
+@@ -276,7 +276,8 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
+         .uniformRange = passInfo.resolveUniformRange,
+         .dst = passInfo.resolveTarget,
+         // Filter taps must land on exact source rows.
+-        .sampleFilter = needsScaling && !passInfo.resolveCopyFilterActive ? tex_copy_conv::SampleFilter::Linear
++        .sampleFilter = (needsScaling || passInfo.resolveBlur) && !passInfo.resolveCopyFilterActive
++                            ? tex_copy_conv::SampleFilter::Linear
+                                                                            : tex_copy_conv::SampleFilter::Nearest,
+     };
+     const bool needsOpaqueAlpha = !isDepth && !gx::efb_has_alpha(convReq.srcFmt);
+@@ -284,7 +285,8 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
+         passInfo.resolveTarget->format == passInfo.colorAttachments[SceneColorAttachmentIndex].format;
+     if (needsConversion) {
+       tex_copy_conv::run(cmd, convReq);
+-    } else if (needsScaling || needsOpaqueAlpha || !sameFormat || passInfo.resolveCopyFilterActive) {
++    } else if (needsScaling || needsOpaqueAlpha || !sameFormat || passInfo.resolveCopyFilterActive ||
++               passInfo.resolveBlur) {
+       tex_copy_conv::blit(cmd, convReq);
+     } else {
+       const webgpu::gpu_prof::Zone zone{cmd, "EFB copy"};
+diff --git a/lib/gfx/frame_packet.hpp b/lib/gfx/frame_packet.hpp
+index 64851aa..1bda2e2 100644
+--- a/lib/gfx/frame_packet.hpp
++++ b/lib/gfx/frame_packet.hpp
+@@ -97,6 +97,7 @@ struct RenderPass {
+   ClipRect resolveRect;
+   Range resolveUniformRange;
+   bool resolveCopyFilterActive = false;
++  bool resolveBlur = false;
+   wgpu::Texture snapshotColorDst;
+   wgpu::TextureView snapshotDepthDst;
+   wgpu::Texture snapshotNormalDst;
 diff --git a/lib/gfx/presentation.cpp b/lib/gfx/presentation.cpp
 index f5550df..8eeeda4 100644
 --- a/lib/gfx/presentation.cpp
@@ -108,6 +245,84 @@ index f5550df..8eeeda4 100644
  uint32_t aurora_get_frame_interpolation_fps() { return aurora::gx::frame_interpolation_fps(); }
  
  void aurora_get_frame_interpolation_diagnostics(AuroraFrameInterpolationDiagnostics* diagnostics) {
+diff --git a/lib/gfx/recording.cpp b/lib/gfx/recording.cpp
+index 6981e05..40df9d4 100644
+--- a/lib/gfx/recording.cpp
++++ b/lib/gfx/recording.cpp
+@@ -491,6 +491,8 @@ void finish_current_offscreen() {
+   g_recorder.offscreenDepth = {};
+ }
+ 
++std::optional<Vec4<float>> g_nextOffscreenClear;
++
+ void start_offscreen(uint32_t width, uint32_t height) {
+   AURORA_ASSERT(width != 0 && height != 0, "start_offscreen requires nonzero dimensions ({}x{})", width, height);
+   AURORA_ASSERT(g_recorder.active(), "start_offscreen called outside of an active recording frame");
+@@ -514,6 +516,10 @@ void start_offscreen(uint32_t width, uint32_t height) {
+       .requireReadyPipelines = true,
+   };
+   set_single_color_target(newPass, g_recorder.offscreenColor.format, {width, height}, g_recorder.offscreenColor.view);
++  if (g_nextOffscreenClear) {
++    newPass.colorAttachments[SceneColorAttachmentIndex].clearValue = *g_nextOffscreenClear;
++    g_nextOffscreenClear.reset();
++  }
+   current_render_passes().emplace_back(std::move(newPass));
+   ++g_recorder.currentRenderPass;
+   g_recorder.inOffscreen = true;
+@@ -863,6 +869,14 @@ void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bo
+   const auto srcH = static_cast<float>(prevPass.colorAttachments[SceneColorAttachmentIndex].size.height);
+   const auto& filter = options.copyFilter;
+   prevPass.resolveCopyFilterActive = filter[0] != 0 || filter[1] != 64 || filter[2] != 0;
++  prevPass.resolveBlur = options.blurSigma > 0.f;
++  // Blur taps two pixels apart (each a bilinear average of 2x2), out to 2.5 sigma each way.
++  Vec4<float> blur{0.f, 0.f, 0.f, 0.f};
++  if (prevPass.resolveBlur) {
++    const float sigmaTaps = std::max(options.blurSigma * 0.5f, 0.25f);
++    const float taps = std::clamp(std::ceil(sigmaTaps * 2.5f), 1.f, 40.f);
++    blur = {taps, 2.f / srcW, 2.f / srcH, 1.f / (2.f * sigmaTaps * sigmaTaps)};
++  }
+   // The copy clamp pins every filter tap to the first or last source row; without it a filtered
+   // copy at internal resolution samples an unrelated EFB row as a visible border.
+   const float clampTopPixels = options.clampTop ? static_cast<float>(rect.y) : 0.f;
+@@ -874,6 +888,7 @@ void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bo
+                      prevPass.resolveCopyFilterActive ? 1.f : 0.f},
+       .flags = {gx::efb_has_alpha(sourceFormat) ? 0.f : 1.f, std::max(options.copyFilterRowStride, 1.f),
+                 (clampTopPixels + 0.5f) / srcH, (clampBottomPixels - 0.5f) / srcH},
++      .blur = blur,
+   };
+   prevPass.resolveUniformRange = push_uniform(uniforms);
+   enqueue_pass(current_frame_packet(), g_recorder.currentRenderPass);
+@@ -1010,6 +1025,8 @@ bool push_custom_draw(DrawTypeId type, const void* payload, size_t payloadSize)
+   return true;
+ }
+ 
++void set_next_offscreen_clear_color(const Vec4<float>& color) { g_nextOffscreenClear = color; }
++
+ void begin_offscreen(uint32_t width, uint32_t height) {
+   ZoneScoped;
+   AURORA_ASSERT(width != 0 && height != 0, "begin_offscreen requires nonzero dimensions ({}x{})", width, height);
+diff --git a/lib/gfx/recording.hpp b/lib/gfx/recording.hpp
+index f893138..d51491b 100644
+--- a/lib/gfx/recording.hpp
++++ b/lib/gfx/recording.hpp
+@@ -72,6 +72,8 @@ void begin_color_pass(const ColorPassDescriptor& desc);
+ void end_color_pass();
+ void queue_texture_copy(wgpu::TexelCopyTextureInfo src, wgpu::TexelCopyTextureInfo dst, wgpu::Extent3D size);
+ void begin_offscreen(uint32_t width, uint32_t height);
++// The next offscreen target starts cleared to this colour instead of transparent black.
++void set_next_offscreen_clear_color(const Vec4<float>& color);
+ void end_offscreen();
+ bool has_normal_attachment() noexcept;
+ RenderTargetLayout get_render_target_layout() noexcept;
+@@ -129,6 +131,8 @@ struct ResolveOptions {
+   bool clampTop = false;
+   bool clampBottom = false;
+   bool persistent = false;
++  // Gaussian blur of the copy (sigma in pixels of the render target); 0 = none.
++  float blurSigma = 0.f;
+ };
+ 
+ void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
 diff --git a/lib/gfx/resources.hpp b/lib/gfx/resources.hpp
 index 3fdc0ee..3a02eb1 100644
 --- a/lib/gfx/resources.hpp
@@ -123,8 +338,75 @@ index 3fdc0ee..3a02eb1 100644
  inline constexpr uint64_t TextureUploadSize = 25165824; // 24 MiB
  
  namespace detail {
+diff --git a/lib/gfx/tex_copy_conv.cpp b/lib/gfx/tex_copy_conv.cpp
+index b364e9b..9ba9a47 100644
+--- a/lib/gfx/tex_copy_conv.cpp
++++ b/lib/gfx/tex_copy_conv.cpp
+@@ -32,6 +32,8 @@ struct Uniforms {
+     copy_filter: vec4f,
+     // x: opaque alpha, y: filter row stride in texels, z/w: clamp UV range for the filter taps.
+     flags: vec4f,
++    // x: blur taps each way (0 = none), yz: tap spacing in UV, w: 1 / (2 sigma^2) in taps.
++    blur: vec4f,
+ };
+ @group(0) @binding(2) var<uniform> ubuf: Uniforms;
+ 
+@@ -66,7 +68,29 @@ fn clamp_copy_uv(uv: vec2f) -> vec2f {
+     return vec2f(uv.x, clamp(uv.y, ubuf.flags.z, ubuf.flags.w));
+ }
+ 
++// Gaussian blur over the copied area (GXSetCopyOverride), for soft shadows.
++fn blur_efb(uv: vec2f) -> vec4f {
++    let n = i32(ubuf.blur.x);
++    let half_pixel = vec2f(0.5, 0.5) / vec2f(textureDimensions(src));
++    let lo = ubuf.offset + half_pixel;
++    let hi = ubuf.offset + ubuf.scale - half_pixel;
++    var sum = vec4f(0.0);
++    var total = 0.0;
++    for (var y = -n; y <= n; y++) {
++        for (var x = -n; x <= n; x++) {
++            let d = vec2f(f32(x), f32(y));
++            let w = exp(-dot(d, d) * ubuf.blur.w);
++            sum += w * textureSampleLevel(src, src_samp, clamp(uv + d * ubuf.blur.yz, lo, hi), 0.0);
++            total += w;
++        }
++    }
++    return sum / total;
++}
++
+ fn sample_efb(uv: vec2f) -> vec4f {
++    if (ubuf.blur.x > 0.0) {
++        return apply_opaque_alpha(blur_efb(uv));
++    }
+     let current = textureSample(src, src_samp, clamp_copy_uv(uv));
+     if (ubuf.copy_filter.w == 0.0) {
+         return apply_opaque_alpha(current);
+@@ -103,6 +127,7 @@ struct UVTransform {
+     scale: vec2f,
+     copy_filter: vec4f,
+     flags: vec4f,
++    blur: vec4f,
+ };
+ @group(0) @binding(1) var<uniform> uv_xf: UVTransform;
+ 
+diff --git a/lib/gfx/tex_copy_conv.hpp b/lib/gfx/tex_copy_conv.hpp
+index 60c0c77..901ad7e 100644
+--- a/lib/gfx/tex_copy_conv.hpp
++++ b/lib/gfx/tex_copy_conv.hpp
+@@ -20,8 +20,10 @@ struct alignas(16) Uniforms {
+   Vec4<float> copyFilter{0.f, 64.f, 0.f, 0.f};
+   // Opaque alpha, filter row stride in texels, clamp UV top and bottom.
+   Vec4<float> flags{0.f, 1.f, 0.f, 1.f};
++  // Gaussian blur: taps each way (0 = none), tap spacing in UV, 1 / (2 sigma^2) in taps.
++  Vec4<float> blur{0.f, 0.f, 0.f, 0.f};
+ };
+-static_assert(sizeof(Uniforms) == 48);
++static_assert(sizeof(Uniforms) == 64);
+ 
+ struct ConvRequest {
+   GXTexFmt fmt;
 diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
-index 136ffb6..35ce419 100644
+index 136ffb6..3a5547b 100644
 --- a/lib/gx/command_processor.cpp
 +++ b/lib/gx/command_processor.cpp
 @@ -17,6 +17,8 @@
@@ -370,7 +652,46 @@ index 136ffb6..35ce419 100644
    gfx::Range vertRange = gfx::push_verts(vertexData.data(), vertexData.size(), canMerge ? 0 : 4);
  
    // Try to merge with previous draw call
-@@ -970,6 +1160,8 @@ void handle_aurora(ByteReader& reader) noexcept {
+@@ -920,8 +1110,38 @@ void handle_aurora(ByteReader& reader) noexcept {
+   } else if (subCmd == GX_AURORA_BEGIN_OFFSCREEN) {
+     const u32 width = reader.read<u32>();
+     const u32 height = reader.read<u32>();
++    g_gxState.offscreenLogicalWidth = 0;
++    g_gxState.offscreenLogicalHeight = 0;
++    gfx::begin_offscreen(width, height);
++  } else if (subCmd == GX_AURORA_BEGIN_OFFSCREEN_LOGICAL) {
++    u32 width = reader.read<u32>();
++    u32 height = reader.read<u32>();
++    const u32 logicalWidth = std::max<u32>(reader.read<u32>(), 1);
++    const u32 logicalHeight = std::max<u32>(reader.read<u32>(), 1);
++    if (width == 0 || height == 0) {
++      // As large as the same corner of the EFB at its current scale.
++      g_gxState.offscreenLogicalWidth = 0;
++      g_gxState.offscreenLogicalHeight = 0;
++      const auto [fbWidth, fbHeight] = logical_fb_size();
++      const auto [targetWidth, targetHeight] = gfx::get_render_target_size();
++      const float scale = fbHeight != 0 && targetHeight != 0
++                              ? static_cast<float>(targetHeight) / static_cast<float>(fbHeight)
++                              : 1.f;
++      width = static_cast<u32>(std::lround(static_cast<float>(logicalWidth) * scale));
++      height = static_cast<u32>(std::lround(static_cast<float>(logicalHeight) * scale));
++    }
++    width = std::clamp<u32>(width, 1, 8192);
++    height = std::clamp<u32>(height, 1, 8192);
++    gfx::set_next_offscreen_clear_color(g_gxState.clearColor);
+     gfx::begin_offscreen(width, height);
++    g_gxState.offscreenLogicalWidth = logicalWidth;
++    g_gxState.offscreenLogicalHeight = logicalHeight;
++  } else if (subCmd == GX_AURORA_SET_COPY_OVERRIDE) {
++    g_gxState.texCopyBlurSigma = std::max(reader.read<f32>(), 0.f);
++    g_gxState.texCopyNoFilter = reader.read<u8>() != 0;
+   } else if (subCmd == GX_AURORA_END_OFFSCREEN) {
++    g_gxState.offscreenLogicalWidth = 0;
++    g_gxState.offscreenLogicalHeight = 0;
+     gfx::end_offscreen();
+   } else if (subCmd == GX_AURORA_DESTROY_TEXOBJ) {
+     evict_texture_object(reader.read<u32>());
+@@ -970,6 +1190,8 @@ void handle_aurora(ByteReader& reader) noexcept {
      const auto vertexData = reader.take(totalVtxBytes);
      const gfx::Range vertRange = gfx::push_verts(vertexData.data(), vertexData.size(), 4);
      if (indexCount != 0) {
@@ -484,7 +805,7 @@ index 4f4c343..83cf24b 100644
  // Interpolated slot being encoded on this thread, or -1 for the native frame.
  extern thread_local int g_interpolationEncodeSlot;
 diff --git a/lib/gx/gx.cpp b/lib/gx/gx.cpp
-index e373bf0..21bf3c2 100644
+index e373bf0..f01d3af 100644
 --- a/lib/gx/gx.cpp
 +++ b/lib/gx/gx.cpp
 @@ -42,6 +42,8 @@ wgpu::BindGroupLayout sTextureBindGroupLayout;
@@ -496,7 +817,7 @@ index e373bf0..21bf3c2 100644
  
  template <typename T>
  T round_away_from_zero(float value) noexcept {
-@@ -260,6 +262,78 @@ void update() noexcept {
+@@ -260,10 +262,89 @@ void update() noexcept {
      window::set_force_aspect_16_9(policy == AURORA_VIEWPORT_16_9);
      window::set_present_surface_fill(policy == AURORA_VIEWPORT_STRETCH);
    }
@@ -575,7 +896,19 @@ index e373bf0..21bf3c2 100644
  }
  
  Vec2<uint32_t> logical_fb_size() noexcept {
-@@ -303,10 +377,18 @@ gfx::ClipRect map_logical_scissor(const gfx::ClipRect& logicalScissor) noexcept
+-  return gfx::is_offscreen() ? gfx::get_render_target_size() : vi::configured_fb_size();
++  if (gfx::is_offscreen()) {
++    // A pass drawn in the game's own EFB coordinates (GX_AURORA_BEGIN_OFFSCREEN_LOGICAL).
++    if (g_gxState.offscreenLogicalWidth != 0 && g_gxState.offscreenLogicalHeight != 0) {
++      return {g_gxState.offscreenLogicalWidth, g_gxState.offscreenLogicalHeight};
++    }
++    return gfx::get_render_target_size();
++  }
++  return vi::configured_fb_size();
+ }
+ 
+ gfx::Viewport map_logical_viewport(const gfx::Viewport& logicalViewport) noexcept {
+@@ -303,10 +384,18 @@ gfx::ClipRect map_logical_scissor(const gfx::ClipRect& logicalScissor) noexcept
    const float scaleX = static_cast<float>(targetWidth) / static_cast<float>(logicalFbWidth);
    const float scaleY = static_cast<float>(targetHeight) / static_cast<float>(logicalFbHeight);
  
@@ -596,7 +929,7 @@ index e373bf0..21bf3c2 100644
  
    const auto mappedLeft = std::clamp(static_cast<int32_t>(std::floor(left)), 0, static_cast<int32_t>(targetWidth));
    const auto mappedTop = std::clamp(static_cast<int32_t>(std::floor(top)), 0, static_cast<int32_t>(targetHeight));
-@@ -433,7 +515,8 @@ void set_logical_viewport(const gfx::Viewport& viewport) noexcept {
+@@ -433,7 +522,8 @@ void set_logical_viewport(const gfx::Viewport& viewport) noexcept {
    }
    g_gxState.logicalViewport = viewport;
    set_render_viewport(mapped_render_viewport());
@@ -606,7 +939,7 @@ index e373bf0..21bf3c2 100644
      set_render_scissor(mapped_render_scissor());
    }
  }
-@@ -460,6 +543,18 @@ void set_render_scissor(const gfx::ClipRect& scissor) noexcept {
+@@ -460,6 +550,18 @@ void set_render_scissor(const gfx::ClipRect& scissor) noexcept {
    gfx::set_scissor(scissor);
  }
  
@@ -626,7 +959,7 @@ index e373bf0..21bf3c2 100644
  
  wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, const gfx::RenderTargetLayout& layout,
 diff --git a/lib/gx/gx.hpp b/lib/gx/gx.hpp
-index 02be26a..e8da695 100644
+index 02be26a..b540e28 100644
 --- a/lib/gx/gx.hpp
 +++ b/lib/gx/gx.hpp
 @@ -305,6 +305,32 @@ inline bool operator==(const AttrArray& lhs, const AttrArray& rhs) {
@@ -691,7 +1024,21 @@ index 02be26a..e8da695 100644
    gfx::Viewport logicalViewport{0.f, 0.f, 640.f, 480.f, 0.f, 1.f};
    gfx::Viewport renderViewport{0.f, 0.f, 640.f, 480.f, 0.f, 1.f};
    gfx::ClipRect logicalScissor{0, 0, 640, 480};
-@@ -455,6 +503,24 @@ void initialize() noexcept;
+@@ -421,6 +469,13 @@ struct GXState {
+   u32 texCopyDstHeight = 0;
+   bool texCopyDstWide = false;
+   const void* texCopyDest = nullptr;
++  // GXSetCopyOverride: Gaussian blur of the next copies (sigma in logical source texels) and
++  // whether they skip the vertical copy filter.
++  float texCopyBlurSigma = 0.f;
++  bool texCopyNoFilter = false;
++  // Logical size of the pass opened by GX_AURORA_BEGIN_OFFSCREEN_LOGICAL (0 when none is open).
++  u32 offscreenLogicalWidth = 0;
++  u32 offscreenLogicalHeight = 0;
+   absl::flat_hash_map<const void*, CopyTextureRef> copyTextures;
+   // Display copy target, presented instead of the EFB when the frame produced one.
+   gfx::TextureHandle displayCopyTexture;
+@@ -455,6 +510,24 @@ void initialize() noexcept;
  void shutdown() noexcept;
  void update() noexcept;
  void set_viewport_policy(AuroraViewportPolicy policy) noexcept;
@@ -716,7 +1063,7 @@ index 02be26a..e8da695 100644
  void clear_static_texture_cache() noexcept;
  void clear_copy_texture_cache() noexcept;
  void evict_copy_texture(const void* dest) noexcept;
-@@ -470,6 +536,8 @@ void set_logical_viewport(const gfx::Viewport& viewport) noexcept;
+@@ -470,6 +543,8 @@ void set_logical_viewport(const gfx::Viewport& viewport) noexcept;
  void set_render_viewport(const gfx::Viewport& viewport) noexcept;
  void set_logical_scissor(const gfx::ClipRect& scissor) noexcept;
  void set_render_scissor(const gfx::ClipRect& scissor) noexcept;

@@ -1232,10 +1232,10 @@ index 0000000..15ca9df
 +
 +} // namespace HangWatch
 diff --git a/runtime/include/hle_stubs.h b/runtime/include/hle_stubs.h
-index e3ba175..4585cf6 100644
+index e3ba175..f5e8101 100644
 --- a/runtime/include/hle_stubs.h
 +++ b/runtime/include/hle_stubs.h
-@@ -17,7 +17,55 @@ void VI_HLE_WaitForNextRetracePoll();
+@@ -17,7 +17,64 @@ void VI_HLE_WaitForNextRetracePoll();
  // for the GXCopyDisp producer path and false for retrace-context presents.
  void VI_HLE_PresentFrame(bool presentedXfb, bool paceToRetrace);
  bool VI_HLE_IsAdvancingRetrace();
@@ -1270,6 +1270,15 @@ index e3ba175..4585cf6 100644
 +// The F10 "Max detail" setting (My Life as a King, lifeking_natives.cpp): every model at its most
 +// detailed level, at any distance and in every camera mode. Takes effect on the game's next frame.
 +void LifeKing_HLE_SetMaxDetail(bool enabled);
++// The F10 shadow settings (My Life as a King, lifeking_shadows.cpp): the size of the character shadow
++// map in pixels (0 = the picture's own scale) and how soft its edges are, 0-100 (0 = hard). Live.
++void LifeKing_HLE_SetShadowResolution(int pixels);
++void LifeKing_HLE_SetShadowSoftness(float percent);
++// How far the character shadows reach (F10 Shadow distance, lifeking_shadows.cpp): 0 near (the game's
++// own square), 1 medium (3 times larger), 2 far (6 times). Live.
++void LifeKing_HLE_SetShadowDistance(int level);
++// True, once, for the game's own copy of the shadow map when it was already made from its own target.
++bool LifeKing_HLE_SkipShadowCopy(uint32_t dest);
 +// The F10 "UI scale" settings (My Life as a King, lifeking_ui_scale.cpp): one scale per kind of
 +// on-screen element (clock, notifications, dialogue...), each kept against its screen corner or edge.
 +// Categories are numbered 0 to count - 1; the key is the [ui_scale] name in Config.toml. Live.
@@ -1291,7 +1300,7 @@ index e3ba175..4585cf6 100644
  void Audio_HLE_Tick(CpuContext* ctx, uint32_t deltaMicros);
  void Audio_HLE_Poll(CpuContext* ctx);
  // Deferred twin of Audio_HLE_Poll for the long host waits that already service
-@@ -47,3 +95,22 @@ extern "C" void OS_HLE_EndDeferredGuestCallbacks();
+@@ -47,3 +104,22 @@ extern "C" void OS_HLE_EndDeferredGuestCallbacks();
  #define PPC_NATIVE_OVERRIDE_VOID(addr_hex, name, arg_list, call_list) \
      [[maybe_unused]] static void native_signature_##addr_hex arg_list { name call_list; } \
      REGISTER_NATIVE_FUNCTION(0x##addr_hex, name)
@@ -1392,7 +1401,7 @@ index 4152ec0..cc9a849 100644
 +void OnFrame(double busyMs) noexcept;
 +} // namespace LifeKingProfiler
 diff --git a/runtime/include/runtime_config.h b/runtime/include/runtime_config.h
-index ea5a12b..8aa1ae2 100644
+index ea5a12b..d6891dd 100644
 --- a/runtime/include/runtime_config.h
 +++ b/runtime/include/runtime_config.h
 @@ -40,6 +40,9 @@ struct RuntimeUserConfig {
@@ -1405,13 +1414,20 @@ index ea5a12b..8aa1ae2 100644
      std::optional<std::string> graphicsApi;
      std::optional<std::string> displayMode;
      std::optional<uint32_t> frameInterpolationFps;
-@@ -51,6 +54,20 @@ struct RuntimeUserConfig {
+@@ -51,6 +54,27 @@ struct RuntimeUserConfig {
      std::optional<bool> textureReplacements;
      std::optional<bool> textureDumps;
      std::optional<bool> showFps;
 +    // [video] max_detail: models always at their most detailed level (My Life as a King: the game's
 +    // own "always high" LOD distances, lifeking_natives.cpp).
 +    std::optional<bool> maxDetail;
++    // [video] shadow_resolution, shadow_softness: the character shadow map's size in pixels (0 = the
++    // picture's own scale) and the softness of its edges, 0-10 (percent) (My Life as a King, lifeking_shadows.cpp).
++    std::optional<int64_t> shadowResolution;
++    std::optional<float> shadowSoftness;
++    // [video] shadow_distance: how far the character shadows reach, "near" (the game's own), "medium"
++    // or "far" (My Life as a King, lifeking_shadows.cpp).
++    std::optional<std::string> shadowDistance;
 +    // [ui_scale] <category> = 0.5..1: how big each kind of on-screen element is drawn, per category
 +    // (My Life as a King, lifeking_ui_scale.cpp). A missing category is the game's own size (1).
 +    std::map<std::string, float> uiScale;
@@ -1426,7 +1442,7 @@ index ea5a12b..8aa1ae2 100644
      std::optional<uint32_t> disabledPostProcessingPaths;
      std::optional<float> audioVolume;
      std::optional<float> audioMusicVolume;
-@@ -86,6 +103,12 @@ struct RuntimeUserConfig {
+@@ -86,6 +110,12 @@ struct RuntimeUserConfig {
      // it here instead of copying the pack, so an asset-only update is visible on the next launch.
      std::optional<std::string> retroRewindRoot;
      std::vector<std::string> overlayRoots;
@@ -1439,7 +1455,7 @@ index ea5a12b..8aa1ae2 100644
      // Controller mappings use Wii/GameCube button names as keys and up to two
      // comma-separated SDL-style physical button names ("south", or
      // "dpad_up,left_shoulder") as values; pressing either bound button counts.
-@@ -139,13 +162,37 @@ inline std::string Trim(std::string_view text) {
+@@ -139,13 +169,37 @@ inline std::string Trim(std::string_view text) {
      return std::string(text.substr(begin, end - begin));
  }
  
@@ -1478,7 +1494,7 @@ index ea5a12b..8aa1ae2 100644
  inline bool IsSupportedGraphicsApi(std::string_view value) {
  #if defined(__APPLE__)
      static constexpr std::array<std::string_view, 2> values{"auto", "metal"};
-@@ -168,7 +215,7 @@ inline bool IsSupportedDisplayMode(std::string_view value) {
+@@ -168,7 +222,7 @@ inline bool IsSupportedDisplayMode(std::string_view value) {
  // 240 was offered by an early build and is no longer supported; a saved 240 is
  // migrated to 180 at the parse site.
  inline bool IsSupportedFrameInterpolationFps(uint32_t value) {
@@ -1487,7 +1503,7 @@ index ea5a12b..8aa1ae2 100644
  }
  
  inline std::optional<std::filesystem::path> ExecutableDirectory() {
-@@ -187,6 +234,13 @@ inline std::optional<std::filesystem::path> ExecutableDirectory() {
+@@ -187,6 +241,13 @@ inline std::optional<std::filesystem::path> ExecutableDirectory() {
      }
  #elif defined(__APPLE__)
      return RuntimePlatform::ExecutableDirectory();
@@ -1501,7 +1517,7 @@ index ea5a12b..8aa1ae2 100644
  #else
      // /proc/self/exe is a Linux-specific magic symlink to the running executable; readlink()
      // does not NUL-terminate and silently truncates if the buffer is too small, so this grows
-@@ -298,6 +352,10 @@ inline void EnsureConfigFile() {
+@@ -298,6 +359,10 @@ inline void EnsureConfigFile() {
                "# replacement would need. Both are read once, at startup.\n"
                "texture_replacements = false\n"
                "texture_dumps = false\n\n"
@@ -1512,7 +1528,7 @@ index ea5a12b..8aa1ae2 100644
                "[audio]\n"
                "volume = 1.0\n"
                "music_volume = 1.0\n"
-@@ -439,6 +497,10 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
+@@ -439,6 +504,10 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
          value && IsSupportedResolutionMultiplier(*value)) {
          config.resolutionMultiplier = *value;
      }
@@ -1523,11 +1539,14 @@ index ea5a12b..8aa1ae2 100644
      if (auto value = FindConfigValue<std::string>(document, "video", "graphics_api")) {
          if (IsSupportedGraphicsApi(*value)) {
              config.graphicsApi = *value;
-@@ -464,6 +526,56 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
+@@ -464,6 +533,59 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
      config.gxWorker = FindConfigValue<bool>(document, "video", "gx_worker");
      config.disableCopyFilter = FindConfigValue<bool>(document, "video", "disable_copy_filter");
      config.showFps = FindConfigValue<bool>(document, "video", "show_fps");
 +    config.maxDetail = FindConfigValue<bool>(document, "video", "max_detail");
++    config.shadowResolution = FindConfigValue<int64_t>(document, "video", "shadow_resolution");
++    config.shadowSoftness = FindConfigFloat(document, "video", "shadow_softness");
++    config.shadowDistance = FindConfigValue<std::string>(document, "video", "shadow_distance");
 +    if (document.contains("ui_scale") && document.at("ui_scale").is_table()) {
 +        for (const auto& [key, value] : document.at("ui_scale").as_table()) {
 +            (void)value;
@@ -1580,7 +1599,7 @@ index ea5a12b..8aa1ae2 100644
      config.textureReplacements = FindConfigValue<bool>(document, "video", "texture_replacements");
      config.textureDumps = FindConfigValue<bool>(document, "video", "texture_dumps");
      if (auto value = FindConfigUint(document, "video", "disabled_post_processing_paths");
-@@ -618,6 +730,14 @@ inline std::string FormatString(std::string_view value) {
+@@ -618,6 +740,14 @@ inline std::string FormatString(std::string_view value) {
      return toml::format(toml::value(std::string(value)));
  }
  
@@ -1595,7 +1614,7 @@ index ea5a12b..8aa1ae2 100644
  inline bool SetResolutionMultiplier(float value) {
      Mutable().resolutionMultiplier = value;
      std::ostringstream formatted;
-@@ -665,6 +785,14 @@ inline bool SetDisplayMode(std::string value) {
+@@ -665,6 +795,14 @@ inline bool SetDisplayMode(std::string value) {
      return WriteSetting("video", "display_mode", FormatString(value));
  }
  
@@ -1610,7 +1629,7 @@ index ea5a12b..8aa1ae2 100644
  inline bool SetSkipUnreadyPipelines(bool value) {
      Mutable().skipUnreadyPipelines = value;
      return WriteSetting("video", "skip_unready_pipelines", value ? "true" : "false");
-@@ -680,11 +808,52 @@ inline bool SetDisableCopyFilter(bool value) {
+@@ -680,11 +818,69 @@ inline bool SetDisableCopyFilter(bool value) {
      return WriteSetting("video", "disable_copy_filter", value ? "true" : "false");
  }
  
@@ -1655,6 +1674,23 @@ index ea5a12b..8aa1ae2 100644
 +    return WriteSetting("ui_scale", category, formatted.str());
 +}
 +
++inline bool SetShadowResolution(int value) {
++    Mutable().shadowResolution = value;
++    return WriteSetting("video", "shadow_resolution", std::to_string(value));
++}
++
++inline bool SetShadowDistance(std::string_view value) {
++    Mutable().shadowDistance = std::string(value);
++    return WriteSetting("video", "shadow_distance", FormatString(value));
++}
++
++inline bool SetShadowSoftness(float value) {
++    Mutable().shadowSoftness = value;
++    std::ostringstream formatted;
++    formatted << value;
++    return WriteSetting("video", "shadow_softness", formatted.str());
++}
++
 +inline bool SetMaxDetail(bool value) {
 +    Mutable().maxDetail = value;
 +    return WriteSetting("video", "max_detail", value ? "true" : "false");
@@ -1663,7 +1699,7 @@ index ea5a12b..8aa1ae2 100644
  inline bool SetDisabledPostProcessingPaths(uint32_t value) {
      Mutable().disabledPostProcessingPaths = value;
      std::ostringstream formatted;
-@@ -848,6 +1017,10 @@ inline uint32_t WindowHeight(uint32_t fallback) {
+@@ -848,6 +1044,10 @@ inline uint32_t WindowHeight(uint32_t fallback) {
      return Get().windowHeight.value_or(fallback);
  }
  
@@ -1674,7 +1710,7 @@ index ea5a12b..8aa1ae2 100644
  inline float ResolutionMultiplier(float fallback = 1.0f) {
      return std::max(0.0f, Get().resolutionMultiplier.value_or(fallback));
  }
-@@ -979,10 +1152,83 @@ inline bool DisableCopyFilter(bool fallback = true) {
+@@ -979,10 +1179,100 @@ inline bool DisableCopyFilter(bool fallback = true) {
      return Get().disableCopyFilter.value_or(fallback);
  }
  
@@ -1746,6 +1782,23 @@ index ea5a12b..8aa1ae2 100644
 +    return std::clamp(it != scales.end() ? it->second : fallback, kMinUiScale, kMaxUiScale);
 +}
 +
++inline int ShadowResolution(int fallback = 4096) {
++    return static_cast<int>(std::clamp<int64_t>(Get().shadowResolution.value_or(fallback), 0, 8192));
++}
++
++inline std::string ShadowDistance(std::string_view fallback = "medium") {
++    const auto& value = Get().shadowDistance;
++    if (value && (*value == "near" || *value == "medium" || *value == "far")) {
++        return *value;
++    }
++    return std::string(fallback);
++}
++
++inline float ShadowSoftness(float fallback = 0.0f) {
++    const float value = Get().shadowSoftness.value_or(fallback);
++    return std::isfinite(value) ? std::clamp(value, 0.0f, 10.0f) : 0.0f;
++}
++
 +inline bool MaxDetail(bool fallback = true) {
 +    return Get().maxDetail.value_or(fallback);
 +}
@@ -1758,7 +1811,7 @@ index ea5a12b..8aa1ae2 100644
  inline bool TextureReplacements(bool fallback = false) {
      return Get().textureReplacements.value_or(fallback);
  }
-@@ -1036,7 +1282,19 @@ inline std::filesystem::path ResolveRelativeToConfig(const std::string& value) {
+@@ -1036,7 +1326,19 @@ inline std::filesystem::path ResolveRelativeToConfig(const std::string& value) {
  // The extracted DATA directory. Empty when nothing is configured.
  inline std::filesystem::path ResolvedDvdRoot() {
      const std::string configured = DvdRoot();
@@ -9445,7 +9498,7 @@ index 0000000..5a0400e
 +
 +} // namespace RomanceAnyGender
 diff --git a/runtime/src/hle/gx/gx_copy.cpp b/runtime/src/hle/gx/gx_copy.cpp
-index 3dbdc8d..be45c92 100644
+index 3dbdc8d..89b83ae 100644
 --- a/runtime/src/hle/gx/gx_copy.cpp
 +++ b/runtime/src/hle/gx/gx_copy.cpp
 @@ -1,6 +1,7 @@
@@ -9479,10 +9532,14 @@ index 3dbdc8d..be45c92 100644
      EnsureAuroraFrameActive();
      if (GxWorker::ShouldDefer()) {
          // The worker drains like the inline path; EndAuroraFrame joins it before the next frame.
-@@ -152,6 +162,13 @@ PPC_NATIVE_OVERRIDE_VOID(8016fc38, GX__CopyDisp_8016fc38, (uint32_t da, uint32_t
+@@ -152,6 +162,17 @@ PPC_NATIVE_OVERRIDE_VOID(8016fc38, GX__CopyDisp_8016fc38, (uint32_t da, uint32_t
  
  
  extern "C" void GX__CopyTex_8016fd74(uint32_t da, uint32_t c) {
++    // My Life as a King: the shadow map was already copied from its own target (lifeking_shadows.cpp).
++    if (LifeKing_HLE_SkipShadowCopy(da)) {
++        return;
++    }
 +    if (GxFrameTrace::Active()) {
 +        auto* cpu = TryGetCpuContext();
 +        GxFrameTrace::Note("CopyTex from (%u,%u %ux%u) to 0x%08X as %ux%u format 0x%02X mip=%u clear=%u lr=0x%08X",
@@ -11084,10 +11141,10 @@ index 0000000..3840c1e
 +} // namespace TouchControls
 diff --git a/runtime/src/hle/lifeking_natives.cpp b/runtime/src/hle/lifeking_natives.cpp
 new file mode 100644
-index 0000000..a113847
+index 0000000..e8c2218
 --- /dev/null
 +++ b/runtime/src/hle/lifeking_natives.cpp
-@@ -0,0 +1,580 @@
+@@ -0,0 +1,582 @@
 +// Natives for My Life as a King (WiiWare PAL, WFCPGD): functions of its own SDK build that need a
 +// host-side answer. Registered only while WFCPGD runs (FOREIGN_GAME_NATIVE, see hle_stubs.h).
 +
@@ -11141,6 +11198,8 @@ index 0000000..a113847
 +#include <atomic>
 +#include <cstdlib>
 +#include <cstring>
++#include <cmath>
++#include <algorithm>
 +
 +// --- Field of view (F10) ------------------------------------------------------------------------------
 +namespace {
@@ -11668,12 +11727,587 @@ index 0000000..a113847
 +    }
 +}
 +FOREIGN_GAME_WRAPPER(WFCPGD, 800CB040, LifeKing_MenuAnimeUpdate);
+diff --git a/runtime/src/hle/lifeking_shadows.cpp b/runtime/src/hle/lifeking_shadows.cpp
+new file mode 100644
+index 0000000..f29b290
+--- /dev/null
++++ b/runtime/src/hle/lifeking_shadows.cpp
+@@ -0,0 +1,522 @@
++// Character shadows of My Life as a King (WFCPGD): resolution and soft edges (F10 > Graphics).
++//
++// The world renderer (System 0x802B1B78 + 0x1730) keeps one shadow map at +0x5190, built by
++// 0x800B1D88: +0x04/+0x06 its size (1 << 9 = 512 square), +0x08 the A8 texture the shadows are
++// copied to, +0x0C a falloff texture made on the CPU, +0x58/+0x5C the half extents of its
++// orthographic light camera (16 x 16 world units, near 20, far 80), +0x84 the shadow colour.
++// Each frame 0x800B235C (from 0x80038B68) draws the shadow casters flat into the top-left 512 x 512
++// of the EFB, and 0x800B256C (first thing of the scene draw, 0x80038BF4) copies that corner to the A8
++// texture with clear; the ground then projects it under the characters (0x800B2228 / 0x800B1720).
++//
++// In the port that corner is drawn at the picture's internal resolution, with hard aliased edges.
++// Here the casters are drawn into an offscreen target of their own instead, at the chosen size, and
++// copied to the game's texture right away, blurred when soft shadows are on. The game's own copy that
++// follows is skipped (its corner of the EFB was never drawn into).
++#include "hle_stubs.h"
++#include "memory.h"
++#include "gx/gx_internal.h"
++
++#include "guest_abi/cpu_context.h"
++#include "guest_function_imports.h"
++#include "runtime_log.h"
++
++#include <dolphin/gx/GXAurora.h>
++
++#include <algorithm>
++#include <atomic>
++#include <cmath>
++#include <cstdint>
++#include <cstdlib>
++#include <cstring>
++#include <string>
++
++extern "C" void GX__SetTexCopySrc_8016f478(uint32_t l, uint32_t t, uint32_t w, uint32_t h);
++extern "C" void GX__SetTexCopyDst_8016f4dc(uint32_t w, uint32_t h, uint32_t f, uint32_t m);
++extern "C" void GX__CopyTex_8016fd74(uint32_t da, uint32_t c);
++extern "C" void GX__InvalidateTexAll_80171110();
++extern "C" void GX__InitTexObj_801707f8(uint32_t oa, uint32_t da, uint32_t w, uint32_t h, uint32_t f, uint32_t ws,
++                                        uint32_t wt, uint32_t m);
++extern "C" void GX__InitTexObjLOD_80170a4c(uint32_t oa, uint32_t mif, uint32_t maf, float mil, float mal, float lb,
++                                           uint32_t bc, uint32_t el, uint32_t ma);
++
++namespace {
++constexpr uint32_t kDrawShadowMap = 0x800B235Cu;
++constexpr uint32_t kGxCtfA8 = 0x27u;
++// Blur sigma at 100% softness, in texels of the game's 512 map (16 world units across 512).
++constexpr float kMaxSoftnessTexels = 3.0f;
++
++std::atomic<int> g_resolution{4096};  // pixels across; 0 = the picture's own scale
++std::atomic<float> g_softness{0.0f};  // percent; 0 = hard
++std::atomic<uint32_t> g_skipCopyDest{0};
++int g_loggedResolution = -1;
++float g_loggedSoftness = -1.0f;
++} // namespace
++
++void LifeKing_HLE_SetShadowResolution(int pixels) {
++    g_resolution.store(std::clamp(pixels, 0, 8192), std::memory_order_relaxed);
++}
++
++void LifeKing_HLE_SetShadowSoftness(float percent) {
++    if (!std::isfinite(percent)) percent = 0.0f;
++    g_softness.store(std::clamp(percent, 0.0f, 100.0f), std::memory_order_relaxed);
++}
++
++bool LifeKing_HLE_SkipShadowCopy(uint32_t dest) {
++    if (dest == 0) {
++        return false;
++    }
++    uint32_t expected = dest;
++    return g_skipCopyDest.compare_exchange_strong(expected, 0u, std::memory_order_relaxed);
++}
++
++// --- Two cascades --------------------------------------------------------------------------------
++// The game's one shadow map covers a square of +-16 world units around the point the camera looks at
++// (half extents at map +0x58 x, +0x5C y; 0x800B2070 sets its orthographic light camera up, centred on
++// r6, worked out just before the call at 0x800365C0). Shadows past it were missing, at the sides with
++// a wider view and far away always, and one map large enough for everything made the near shadows
++// blocky. So there are two maps, both seen by the same light camera, only framed differently:
++//   - near: the game's own square (times the field of view scale above 100%), sharp as before;
++//   - far: 6 times larger, moved forward so it runs from just behind the camera to far in front of it,
++//     with the near square cleared out of it so the two never darken the same ground twice.
++// The far map is the game's own (texture at map +0x08, texture object +0x10, light camera slot r7 of
++// 0x800B1720). The near map is ours: a second texture and texture object (made with the map,
++// 0x800B1D88), and the light camera framed for it copied into camera 31 of the scene (ScnRoot +0xF8 +
++// 0x10C * i; 30 if the light is camera 31): the scene hands all its cameras to nw4r's slots before it
++// draws (0x801C6558 -> G3DState 0x8034CD60), and the game's projection callback (0x800B0FC0, mapping
++// 0x20) turns that slot into the lookup matrix. Every ground material the game gives a
++// shadow (0x800B1720: one texture coordinate, two textures, three TEV stages ending in
++// lerp(previous, shadow colour, shadow)) gets the same once more for the near map, so the two blend in
++// turn. LIFEKING_SHADOW_CASCADES=0 keeps one large map instead.
++namespace {
++constexpr uint32_t kSetupShadowCamera = 0x800B2070u;
++constexpr uint32_t kCreateShadowMap = 0x800B1D88u;
++constexpr uint32_t kAddShadowToMaterial = 0x800B1720u;
++constexpr uint32_t kGameNewArray = 0x8009210Cu;  // operator new[](size, align, heap)
++constexpr float kFarReach = 6.0f;
++constexpr float kFarForward = 0.6f;  // the far square's centre, in half extents ahead of the camera
++constexpr uint32_t kCameraDataWords = 0x10C / 4;
++constexpr uint8_t kMaterialShadowMark = 0xC3;  // what 0x800B1720 leaves at the material's TEV + 0x1F
++
++// Test switches while the two maps are being made to work: LIFEKING_SHADOW_CASCADES=1 turns them on
++// (one large map otherwise), LIFEKING_SHADOW_TEST adds up 1 (no hole in the far map), 2 (no second
++// series on the materials), 4 (no near map drawn).
++bool CascadesOn() {
++    static const bool on = [] {
++        const char* value = std::getenv("LIFEKING_SHADOW_CASCADES");
++        const bool enabled = value != nullptr && std::strcmp(value, "1") == 0;
++        RT_LOGF("lifeking", "shadows: %s\n", enabled ? "two cascades (LIFEKING_SHADOW_CASCADES=1, test)"
++                                                     : "one large map (LIFEKING_SHADOW_CASCADES=1 for two)");
++        return enabled;
++    }();
++    return on;
++}
++
++int CascadeTest() {
++    static const int mask = [] {
++        const char* value = std::getenv("LIFEKING_SHADOW_TEST");
++        const int bits = value != nullptr ? std::atoi(value) : 0;
++        if (bits != 0) RT_LOGF("lifeking", "shadows: test %d (1 no hole, 2 no second series, 4 no near map)\n", bits);
++        return bits;
++    }();
++    return mask;
++}
++
++// The first frames with two maps: what they were set to (for the log).
++int g_cascadeLogFrames = 3;
++
++struct Cascades {
++    uint32_t nearImage = 0;    // guest texture buffer of the near map
++    uint32_t nearTexObj = 0;   // its GXTexObj
++    uint32_t scratchDest = 0;  // copy destinations for the clearing copies, one per size (+0, +0x20, +0x40)
++    uint32_t farFalloffTexObj = 0;  // a flat falloff for the far map (see LifeKing_AddShadowToMaterial)
++    uint32_t nearSlot = 31;    // the scene camera that carries the near framing
++    uint32_t cameraData = 0;   // the light camera's nw4r CameraData this frame
++    uint32_t nearCamera[kCameraDataWords] = {};
++    uint32_t farCamera[kCameraDataWords] = {};
++    bool valid = false;        // both framings were set up at least once
++    uint32_t materials = 0, materialsFull = 0;
++};
++Cascades g_cascades;
++
++bool IsGuestPointer(uint32_t address) {
++    return (address >= 0x80000000u && address < 0x81800000u) || (address >= 0x90000000u && address < 0x94000000u);
++}
++
++void SaveCamera(uint32_t* out, uint32_t data) {
++    for (uint32_t i = 0; i < kCameraDataWords; ++i) out[i] = Memory::Read32(data + i * 4u);
++}
++
++void LoadCamera(uint32_t data, const uint32_t* in) {
++    for (uint32_t i = 0; i < kCameraDataWords; ++i) Memory::Write32(data + i * 4u, in[i]);
++}
++
++// A float of a saved CameraData (the words are kept as the guest has them, read with Read32).
++float Word(const uint32_t* camera, uint32_t offset) {
++    float value;
++    std::memcpy(&value, &camera[offset / 4u], sizeof(value));
++    return value;
++}
++
++// Copies a rectangle of the map (in its texels) with clear: that clears it.
++// Each kind of rectangle has a destination of its own: a copy texture changing size every call would be
++// made anew every time.
++void ClearMapRect(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint32_t kind) {
++    if (x1 <= x0 || y1 <= y0 || g_cascades.scratchDest == 0) return;
++    GX__SetTexCopySrc_8016f478(x0, y0, x1 - x0, y1 - y0);
++    GX__SetTexCopyDst_8016f4dc(x1 - x0, y1 - y0, kGxCtfA8, 0);
++    GX__CopyTex_8016fd74(g_cascades.scratchDest + kind * 0x20u, 1);
++}
++} // namespace
++
++// Makes the shadow map (0x800B1D88), then the near map's texture beside it.
++extern "C" void LifeKing_CreateShadowMap(CpuContext* ctx) {
++    const uint32_t map = ctx->gpr[3];
++    GuestFunctions::BaseTranslation(kCreateShadowMap)(ctx);
++    if (!CascadesOn() || map == 0 || g_cascades.nearTexObj != 0) return;
++    const uint32_t width = Memory::Read16(map + 0x04u), height = Memory::Read16(map + 0x06u);
++    if (width == 0 || height == 0 || width > 1024 || height > 1024) return;
++    const uint32_t imageSize = (width * height + 31u) & ~31u;  // I8, as the game's
++    const CpuContext saved = *ctx;
++    ctx->gpr[3] = 2u * imageSize + 0x80u;  // near map, flat falloff, their texture objects, scratch
++    ctx->gpr[4] = 0x20u;
++    ctx->gpr[5] = 1u;
++    GuestFunctions::BaseTranslation(kGameNewArray)(ctx);
++    const uint32_t block = ctx->gpr[3];
++    *ctx = saved;
++    if (!IsGuestPointer(block)) {
++        RT_LOGF("lifeking", "shadows: no memory for the near map, one map only\n");
++        return;
++    }
++    g_cascades.nearImage = block;
++    const uint32_t falloffImage = block + imageSize;
++    g_cascades.nearTexObj = block + 2u * imageSize;
++    g_cascades.farFalloffTexObj = block + 2u * imageSize + 0x20u;
++    g_cascades.scratchDest = block + 2u * imageSize + 0x40u;
++    // The game's falloff (made by 0x800B1D88 at map +0x0C) grows down the map's rows, 6 * sqrt(row): a
++    // shadow's strength depends on where in the square it falls, from 0 at the top to 135 / 255 at the
++    // bottom. Over the far square that made distant shadows faint, so the far map gets the bottom's.
++    const uint32_t middle = static_cast<uint32_t>(6.0 * std::sqrt(static_cast<double>(height - 1u)));
++    const uint32_t fill = middle * 0x01010101u;
++    for (uint32_t i = 0; i < imageSize; i += 4u) Memory::Write32(falloffImage + i, fill);
++    GX__InitTexObj_801707f8(g_cascades.farFalloffTexObj, falloffImage, width, height, 1, 0, 0, 0);
++    GX__InitTexObjLOD_80170a4c(g_cascades.farFalloffTexObj, 1, 1, 0.0f, 0.0f, 0.0f, 0, 0, 0);
++    g_cascades.nearSlot = Memory::Read32(map + 0x88u) == 31u ? 30u : 31u;  // +0x88: the light's camera
++    GX__InitTexObj_801707f8(g_cascades.nearTexObj, g_cascades.nearImage, width, height, 1, 0, 0, 0);
++    GX__InitTexObjLOD_80170a4c(g_cascades.nearTexObj, 1, 1, 0.0f, 0.0f, 0.0f, 0, 0, 0);
++    RT_LOGF("lifeking", "shadows: near map %ux%u at %08X\n", width, height, block);
++}
++FOREIGN_GAME_WRAPPER(WFCPGD, 800B1D88, LifeKing_CreateShadowMap);
++
++// Gives a ground material its shadow (0x800B1720: r3 the material, r4/r5 the map's two texture
++// objects, r6 the shadow colour, r7 the light camera's slot), then once more for the near map.
++extern "C" void LifeKing_AddShadowToMaterial(CpuContext* ctx) {
++    if (!CascadesOn() || g_cascades.nearTexObj == 0 || (CascadeTest() & 2) != 0) {
++        GuestFunctions::BaseTranslation(kAddShadowToMaterial)(ctx);
++        return;
++    }
++    const uint32_t material = Memory::Read32(ctx->gpr[3]);
++    const uint32_t tevOffset = IsGuestPointer(material) ? Memory::Read32(material + 0x28u) : 0;
++    const uint32_t tev = tevOffset != 0 ? material + tevOffset : 0;
++    if (tev == 0) {
++        GuestFunctions::BaseTranslation(kAddShadowToMaterial)(ctx);
++        return;
++    }
++    const uint8_t mark = Memory::Read8(tev + 0x1Fu);
++    if (mark == kMaterialShadowMark) {
++        // The TEV is shared with a material that already got its series: the game then only gives
++        // this material its own parts (texture coordinate, textures, stage count) and checks that the
++        // TEV has its stage count + 3 stages (TEV +0xC; the material's count is at +0x16). With both
++        // series the TEV has + 6, so for the game's series the TEV count shows + 3, then + 6.
++        const uint8_t tevStages = Memory::Read8(tev + 0x0Cu);
++        const uint8_t ownStages = Memory::Read8(material + 0x16u);
++        if (tevStages == ownStages + 3u) {
++            GuestFunctions::BaseTranslation(kAddShadowToMaterial)(ctx);  // one series only
++            return;
++        }
++        if (tevStages != ownStages + 6u) {
++            return;  // this material already has its parts
++        }
++        const uint32_t textures = Memory::Read32(material + 0x2Cu);
++        if (textures + 3u > 7u) {
++            return;  // cannot happen with a TEV that has both, but never assert
++        }
++        const CpuContext shared = *ctx;
++        Memory::Write8(tev + 0x0Cu, static_cast<uint8_t>(ownStages + 3u));
++        ctx->gpr[5] = g_cascades.farFalloffTexObj;
++        GuestFunctions::BaseTranslation(kAddShadowToMaterial)(ctx);
++        const CpuContext afterShared = *ctx;
++        Memory::Write8(tev + 0x0Cu, tevStages);
++        *ctx = shared;
++        Memory::Write32(material + 0x2Cu, textures + 2u);
++        ctx->gpr[4] = g_cascades.nearTexObj;
++        ctx->gpr[7] = g_cascades.nearSlot;
++        GuestFunctions::BaseTranslation(kAddShadowToMaterial)(ctx);
++        Memory::Write32(material + 0x2Cu, textures);
++        *ctx = afterShared;
++        ++g_cascades.materials;
++        return;
++    }
++    const CpuContext saved = *ctx;
++    ctx->gpr[5] = g_cascades.farFalloffTexObj;
++    GuestFunctions::BaseTranslation(kAddShadowToMaterial)(ctx);
++    if (Memory::Read8(tev + 0x1Fu) != kMaterialShadowMark) {
++        return;  // the game could not add it (too many stages already)
++    }
++    // 0x800B1720 puts its two textures at the material's texture count (ResMat +0x2C) and the one
++    // after, without counting them (it asserts that those texture slots are still free). The near
++    // map's two go two further: the count is raised by 2 for that call and put back.
++    const uint32_t textures = Memory::Read32(material + 0x2Cu);
++    if (textures + 3u > 7u) {
++        ++g_cascades.materialsFull;
++        if (g_cascades.materialsFull <= 8) {
++            RT_LOGF("lifeking", "shadows: material %08X uses %u textures, no room for the near map\n",
++                    material, textures);
++        }
++        return;
++    }
++    const CpuContext after = *ctx;
++    *ctx = saved;
++    Memory::Write8(tev + 0x1Fu, mark);
++    Memory::Write32(material + 0x2Cu, textures + 2u);
++    ctx->gpr[4] = g_cascades.nearTexObj;
++    ctx->gpr[7] = g_cascades.nearSlot;
++    GuestFunctions::BaseTranslation(kAddShadowToMaterial)(ctx);
++    Memory::Write32(material + 0x2Cu, textures);
++    const bool both = Memory::Read8(tev + 0x1Fu) == kMaterialShadowMark;
++    Memory::Write8(tev + 0x1Fu, kMaterialShadowMark);
++    *ctx = after;
++    ++g_cascades.materials;
++    if (!both) {
++        ++g_cascades.materialsFull;
++        if (g_cascades.materialsFull <= 8) {
++            RT_LOGF("lifeking", "shadows: material %08X has no room for the near map; far map only there\n",
++                    material);
++        }
++    }
++}
++FOREIGN_GAME_WRAPPER(WFCPGD, 800B1720, LifeKing_AddShadowToMaterial);
++
++// --- Shadow distance (one map) -------------------------------------------------------------------
++// F10 Shadow distance: Near keeps the game's square (times the field of view scale above 100%, for the
++// sides), Medium makes it 3 times larger and Far 6 times, both moved forward so they run from just
++// behind the camera to far in front of it. A larger square spreads the same map over more ground, so
++// each shadow gets fewer texels. The game's falloff (map +0x0C, filled by 0x800B1D88 with 6 * sqrt(row)
++// along its bytes) makes a shadow's strength depend on where in the square it falls; stretched over a
++// larger square it left distant shadows faint, so Medium and Far fill it with its strongest value
++// (135 / 255) and Near puts the game's back.
++namespace {
++constexpr float kShadowReach[] = {1.0f, 3.0f, 6.0f};
++std::atomic<int> g_shadowDistance{1};
++int g_falloffLevel = -1;  // what the game's falloff texture holds now
++
++void FillFalloff(uint32_t map, int level) {
++    const uint32_t width = Memory::Read16(map + 0x04u), height = Memory::Read16(map + 0x06u);
++    const uint32_t image = Memory::Read32(map + 0x0Cu);
++    if (!IsGuestPointer(image) || width == 0 || height == 0 || width > 1024 || height > 1024) return;
++    const uint32_t size = width * height;
++    for (uint32_t i = 0; i < size; i += 4u) {
++        uint32_t word = 0;
++        for (uint32_t b = 0; b < 4u; ++b) {
++            const uint32_t row = (i + b) / width;
++            const uint32_t value = level == 0 ? static_cast<uint32_t>(6.0 * std::sqrt(static_cast<double>(row)))
++                                              : static_cast<uint32_t>(6.0 * std::sqrt(static_cast<double>(height - 1u)));
++            word = (word << 8) | (value & 0xFFu);
++        }
++        Memory::Write32(image + i, word);
++    }
++    GX__InvalidateTexAll_80171110();
++    g_falloffLevel = level;
++}
++} // namespace
++
++void LifeKing_HLE_SetShadowDistance(int level) {
++    g_shadowDistance.store(std::clamp(level, 0, 2), std::memory_order_relaxed);
++}
++
++// Sets the light camera up (0x800B2070: r3 the map, r4 the scene, r5 the camera, r6 the centre), once
++// for each map.
++extern "C" void LifeKing_SetupShadowCamera(CpuContext* ctx) {
++    const uint32_t map = ctx->gpr[3];
++    const uint32_t centre = ctx->gpr[6];
++    const uint32_t data = ctx->gpr[5] != 0 ? Memory::Read32(ctx->gpr[5]) : 0;
++    if (map == 0 || centre == 0 || !IsGuestPointer(data)) {
++        GuestFunctions::BaseTranslation(kSetupShadowCamera)(ctx);
++        return;
++    }
++    const float fov = std::max(GX_HLE_FieldOfViewScale(), 1.0f);
++    const float x = Memory::ReadFloat32(map + 0x58u), y = Memory::ReadFloat32(map + 0x5Cu);
++    float oldCentre[3];
++    for (uint32_t i = 0; i < 3; ++i) oldCentre[i] = Memory::ReadFloat32(centre + i * 4u);
++    const bool cascades = CascadesOn() && g_cascades.nearTexObj != 0;
++    const CpuContext saved = *ctx;
++
++    if (cascades) {
++        Memory::WriteFloat32(map + 0x58u, x * fov);
++        Memory::WriteFloat32(map + 0x5Cu, y * fov);
++        GuestFunctions::BaseTranslation(kSetupShadowCamera)(ctx);
++        SaveCamera(g_cascades.nearCamera, data);
++        // The scene camera that hands the near framing to the ground's lookup (r4: the scene).
++        const uint32_t scene = saved.gpr[4];
++        if (IsGuestPointer(scene)) {
++            LoadCamera(scene + 0xF8u + 0x10Cu * g_cascades.nearSlot, g_cascades.nearCamera);
++        }
++        *ctx = saved;
++    }
++
++    // The far one: larger, and moved forward. The main camera: the renderer is map - 0x5190, its camera
++    // the one numbered at +0x5218, its nw4r CameraData at camera +0xC (position +0x74, target +0x8C).
++    const int level = cascades ? 2 : std::clamp(g_shadowDistance.load(std::memory_order_relaxed), 0, 2);
++    if (!cascades && level != g_falloffLevel) FillFalloff(map, level);
++    const float reach = cascades ? kFarReach : kShadowReach[level];
++    const float wideX = x * fov * reach, wideY = y * fov * reach;
++    Memory::WriteFloat32(map + 0x58u, wideX);
++    Memory::WriteFloat32(map + 0x5Cu, wideY);
++    const uint32_t renderer = map - 0x5190u;
++    const uint32_t camera = renderer + Memory::Read32(renderer + 0x5218u) * 0x22Cu + 0xA84u;
++    const uint32_t mainData = Memory::Read32(camera + 0xCu);
++    if (level > 0 && IsGuestPointer(mainData)) {
++        const float px = Memory::ReadFloat32(mainData + 0x74u), pz = Memory::ReadFloat32(mainData + 0x7Cu);
++        const float dx = Memory::ReadFloat32(mainData + 0x8Cu) - px;
++        const float dz = Memory::ReadFloat32(mainData + 0x94u) - pz;
++        const float length = std::sqrt(dx * dx + dz * dz);
++        if (std::isfinite(length) && length > 1e-4f) {
++            const float ahead = std::min(wideX, wideY) * kFarForward;
++            Memory::WriteFloat32(centre + 0u, px + dx / length * ahead);
++            Memory::WriteFloat32(centre + 8u, pz + dz / length * ahead);
++        }
++    }
++    GuestFunctions::BaseTranslation(kSetupShadowCamera)(ctx);
++    if (cascades) {
++        SaveCamera(g_cascades.farCamera, data);
++        g_cascades.cameraData = data;
++        g_cascades.valid = true;
++    }
++
++    Memory::WriteFloat32(map + 0x58u, x);
++    Memory::WriteFloat32(map + 0x5Cu, y);
++    for (uint32_t i = 0; i < 3; ++i) Memory::WriteFloat32(centre + i * 4u, oldCentre[i]);
++}
++FOREIGN_GAME_WRAPPER(WFCPGD, 800B2070, LifeKing_SetupShadowCamera);
++
++extern "C" void LifeKing_DrawShadowMap(CpuContext* ctx) {
++    g_skipCopyDest.store(0, std::memory_order_relaxed);
++    const uint32_t map = ctx->gpr[3];
++    const int resolution = g_resolution.load(std::memory_order_relaxed);
++    const float softness = g_softness.load(std::memory_order_relaxed);
++    const uint32_t width = map != 0 ? Memory::Read16(map + 0x04u) : 0;
++    const uint32_t height = map != 0 ? Memory::Read16(map + 0x06u) : 0;
++    const uint32_t dest = map != 0 ? Memory::Read32(map + 0x08u) : 0;
++    const uint32_t cameraData = ctx->gpr[7] != 0 ? Memory::Read32(ctx->gpr[7]) : 0;
++    // The framings last set up: while the game is paused it draws the map without setting the light up,
++    // and the near map and the hole have to stay, or both maps shade the near square.
++    const bool cascades = g_cascades.valid && cameraData == g_cascades.cameraData && g_cascades.nearImage != 0;
++    // Two maps need the offscreen path; without a resolution of its own it is drawn at the picture's.
++    const bool own = (resolution > 0 || softness > 0 || cascades) && width >= 16 && height >= 16 && width <= 640 &&
++                     height <= 528 && dest != 0;
++    if (!own) {
++        GuestFunctions::BaseTranslation(kDrawShadowMap)(ctx);
++        return;
++    }
++
++    // The offscreen size: the chosen one across the larger side, or 0 for the EFB's own scale.
++    const uint32_t larger = std::max(width, height);
++    const uint32_t targetWidth = resolution > 0 ? static_cast<uint32_t>(resolution) * width / larger : 0;
++    const uint32_t targetHeight = resolution > 0 ? static_cast<uint32_t>(resolution) * height / larger : 0;
++    const float blurPercent = softness;
++    const float blurTexels = kMaxSoftnessTexels * blurPercent / 100.0f;
++    if (resolution != g_loggedResolution || blurPercent != g_loggedSoftness) {
++        g_loggedResolution = resolution;
++        g_loggedSoftness = blurPercent;
++        RT_LOGF("lifeking", "shadow map %ux%u drawn at %s, soft %.2f%% (blur %.2f texels)%s\n", width, height,
++                resolution > 0 ? std::to_string(resolution).c_str() : "picture scale", blurPercent, blurTexels,
++                cascades ? ", near and far maps" : "");
++    }
++
++    const CpuContext saved = *ctx;
++    EnsureAuroraFrameActive();
++    if (cascades) LoadCamera(cameraData, g_cascades.farCamera);
++    GxWorker::Run([=] { GXCreateFrameBufferLogical(targetWidth, targetHeight, width, height); });
++    GuestFunctions::BaseTranslation(kDrawShadowMap)(ctx);
++    if (cascades) {
++        // Clear the near square out of the far map. Both cameras look the same way, so it is where the
++        // far camera sees the near camera, near half extents wide (in the far map's texels).
++        const uint32_t* farCam = g_cascades.farCamera;
++        const uint32_t* nearCam = g_cascades.nearCamera;
++        float nv[12], fv[12];
++        for (uint32_t i = 0; i < 12; ++i) {
++            nv[i] = Word(nearCam, i * 4u);
++            fv[i] = Word(farCam, i * 4u);
++        }
++        // The near camera's position: -R^T t of its view matrix.
++        float p[3];
++        for (int c = 0; c < 3; ++c) p[c] = -(nv[0 * 4 + c] * nv[3] + nv[1 * 4 + c] * nv[7] + nv[2 * 4 + c] * nv[11]);
++        const float fx = fv[0] * p[0] + fv[1] * p[1] + fv[2] * p[2] + fv[3];
++        const float fy = fv[4] * p[0] + fv[5] * p[1] + fv[6] * p[2] + fv[7];
++        const float farX = Word(farCam, 0xC8u), farY = Word(farCam, 0xBCu);  // right, top
++        const float nearX = Word(nearCam, 0xC8u), nearY = Word(nearCam, 0xBCu);
++        if (farX > 0.0f && farY > 0.0f && nearX > 0.0f && nearY > 0.0f && std::isfinite(fx) && std::isfinite(fy)) {
++            const float w = static_cast<float>(width), h = static_cast<float>(height);
++            const float cx = (0.5f + 0.5f * fx / farX) * w, cy = (0.5f - 0.5f * fy / farY) * h;
++            const float hw = nearX / farX * 0.5f * w, hh = nearY / farY * 0.5f * h;
++            const auto texel = [](float v, float size) {
++                return static_cast<uint32_t>(std::clamp(v, 0.0f, size));
++            };
++            const uint32_t x0 = texel(std::ceil(cx - hw), w), y0 = texel(std::ceil(cy - hh), h);
++            const uint32_t x1 = texel(std::floor(cx + hw), w), y1 = texel(std::floor(cy + hh), h);
++            if (g_cascadeLogFrames > 0) {
++                --g_cascadeLogFrames;
++                RT_LOGF("lifeking", "shadows: far %.1fx%.1f near %.1fx%.1f, near camera at %.2f,%.2f,%.2f seen at "
++                        "%.2f,%.2f by the far one, hole %u,%u..%u,%u of %ux%u, near slot %u\n",
++                        farX, farY, nearX, nearY, p[0], p[1], p[2], fx, fy, x0, y0, x1, y1, width, height,
++                        g_cascades.nearSlot);
++            }
++            // Rounded inwards: a texel outwards would leave a ring with no shadow at all.
++            if ((CascadeTest() & 1) == 0) {
++                GxWorker::Run([] { GXSetCopyOverride(0.0f, GX_TRUE); });
++                ClearMapRect(x0, y0, x1, y1, 0);
++            }
++        }
++    }
++    // The game's own copy (0x800B256C): its corner, as A8, with clear and without the copy filter.
++    GxWorker::Run([=] { GXSetCopyOverride(blurTexels, GX_TRUE); });
++    GX__SetTexCopySrc_8016f478(0, 0, width, height);
++    GX__SetTexCopyDst_8016f4dc(width, height, kGxCtfA8, 0);
++    GX__CopyTex_8016fd74(dest, 1);
++    GxWorker::Run([] {
++        GXSetCopyOverride(0.0f, GX_FALSE);
++        GXRestoreFrameBuffer();
++    });
++
++    if (cascades && (CascadeTest() & 4) == 0) {
++        // The near map: the same light camera, framed as the game frames it.
++        *ctx = saved;
++        LoadCamera(cameraData, g_cascades.nearCamera);
++        // A clear one-texel border, as outside its square the near map is sampled at its edge (clamp):
++        // the camera's scissor (CameraData +0xF4 x, +0xF8 y, +0xFC width, +0x100 height, set by
++        // 0x801C1EC0) keeps the casters one texel in, and the copy with clear of the frame before left
++        // that edge empty. Copies that clear a strip each cost a whole pass at this size.
++        const uint32_t sx = Memory::Read32(cameraData + 0xF4u), sy = Memory::Read32(cameraData + 0xF8u);
++        const uint32_t sw = Memory::Read32(cameraData + 0xFCu), sh = Memory::Read32(cameraData + 0x100u);
++        if (sw > 2u && sh > 2u && sw <= width && sh <= height) {
++            Memory::Write32(cameraData + 0xF4u, sx + 1u);
++            Memory::Write32(cameraData + 0xF8u, sy + 1u);
++            Memory::Write32(cameraData + 0xFCu, sw - 2u);
++            Memory::Write32(cameraData + 0x100u, sh - 2u);
++        }
++        // Half the size: it covers a sixth of the far map's ground, so it is still three times as fine.
++        const uint32_t nearWidth = targetWidth / 2u, nearHeight = targetHeight / 2u;
++        GxWorker::Run([=] { GXCreateFrameBufferLogical(nearWidth, nearHeight, width, height); });
++        GuestFunctions::BaseTranslation(kDrawShadowMap)(ctx);
++        GxWorker::Run([=] { GXSetCopyOverride(blurTexels, GX_TRUE); });
++        GX__SetTexCopySrc_8016f478(0, 0, width, height);
++        GX__SetTexCopyDst_8016f4dc(width, height, kGxCtfA8, 0);
++        GX__CopyTex_8016fd74(g_cascades.nearImage, 1);
++        GxWorker::Run([] {
++            GXSetCopyOverride(0.0f, GX_FALSE);
++            GXRestoreFrameBuffer();
++        });
++        LoadCamera(cameraData, g_cascades.farCamera);
++    }
++    g_skipCopyDest.store(dest, std::memory_order_relaxed);
++}
++FOREIGN_GAME_WRAPPER(WFCPGD, 800B235C, LifeKing_DrawShadowMap);
+diff --git a/runtime/src/hle/lifeking_title.cpp b/runtime/src/hle/lifeking_title.cpp
+new file mode 100644
+index 0000000..ca50342
+--- /dev/null
++++ b/runtime/src/hle/lifeking_title.cpp
+@@ -0,0 +1,41 @@
++// Boot screens of My Life as a King (WFCPGD), as Liara wants them.
++//
++// The game's logo thread (0x800D0FA8, started by 0x800D0F30) runs a small state machine, one step
++// per call of 0x800D125C (r3 the state: +0x04 milliseconds slept per step, +0x08 timer, +0x0C step,
++// +0x10 "a button may skip", +0x14 strap pages shown, +0x24 Square Enix logo pane), while the main
++// thread loads the game:
++//   0x0A..0x1F  the wrist strap warning (strapImage_<language>_LZ.bin, pages A and B, faded in/out)
++//   0x28..0x29  fade out, strap hidden (0x8009C560 with 0, 0)
++//   0x32..0x3D  the Square Enix logo
++//   0x3E..0x3F  waits for the loading to end, then fades out and ends the thread
++// The strap warning is skipped: from step 0x0A (the first after the start) the machine goes straight
++// to 0x29, which waits for the fader (idle: nothing was faded in), hides the strap (never shown) and
++// goes on with the Square Enix logo as before.
++#include "hle_stubs.h"
++#include "memory.h"
++
++#include "guest_abi/cpu_context.h"
++#include "guest_function_imports.h"
++#include "runtime_log.h"
++
++#include <cstdint>
++
++namespace {
++constexpr uint32_t kLogoThreadStep = 0x800D125Cu;
++constexpr uint32_t kStepStrapStart = 0x0Au;
++constexpr uint32_t kStepStrapHidden = 0x29u;
++bool g_strapSkipLogged = false;
++} // namespace
++
++extern "C" void LifeKing_LogoThreadStep(CpuContext* ctx) {
++    const uint32_t state = ctx->gpr[3];
++    if (state != 0 && Memory::Read32(state + 0x0Cu) == kStepStrapStart) {
++        Memory::Write32(state + 0x0Cu, kStepStrapHidden);
++        if (!g_strapSkipLogged) {
++            g_strapSkipLogged = true;
++            RT_LOGF("lifeking", "boot: wrist strap screen skipped\n");
++        }
++    }
++    GuestFunctions::BaseTranslation(kLogoThreadStep)(ctx);
++}
++FOREIGN_GAME_WRAPPER(WFCPGD, 800D125C, LifeKing_LogoThreadStep);
 diff --git a/runtime/src/hle/lifeking_ui_scale.cpp b/runtime/src/hle/lifeking_ui_scale.cpp
 new file mode 100644
-index 0000000..f10358f
+index 0000000..730ef36
 --- /dev/null
 +++ b/runtime/src/hle/lifeking_ui_scale.cpp
-@@ -0,0 +1,508 @@
+@@ -0,0 +1,616 @@
 +// F10 "UI scale" for My Life as a King (WFCPGD): one size per kind of on-screen element.
 +//
 +// The game draws all its 2D interface with nw4r::lyt: a few layouts (menu_eu.arc: common, menu_build,
@@ -11763,6 +12397,11 @@ index 0000000..f10358f
 +    // talk window's tail, which must stay where it points whatever the scale).
 +    float selfX = 0.0f;
 +    float selfY = 0.0f;
++    // When the scripts leave the pane at its layout x (fromX), it is moved to toX, toY (toX 0: never),
++    // at every scale, 100% included.
++    float fromX = 0.0f;
++    float toX = 0.0f;
++    float toY = 0.0f;
 +};
 +
 +// Root panes of each element (common.brlyt unless noted). A pane under one already scaled is left
@@ -11786,16 +12425,22 @@ index 0000000..f10358f
 +    {"ttl_dat_nul_01", kSystemMessages, kMid, kMid},  // menu_title: save slots
 +    {"ttl_sys_nul", kSystemMessages, kMid, kMid},
 +    {"key_nul", kKeyboard, kMid, kMid},
-+    {"com_men_nul_1", kMenus, kAuto, kAuto},      // menu_build: talk window under the speaker
++    // Talk window under the speaker (Chime in the middle: report, Frog Board...): anchored on the tip
++    // of its tail (com_men_hge_TR1, 26x31 centred at -29,-18; menu_window_hgTR points up-right).
++    {"com_men_nul_1", kMenus, kSelf, kSelf, -21.0f, -2.5f},
 +    // Talk window beside the speaker (Chime's report, the chancellor's costume talk, the signboard...)
 +    // and the medal window: anchored on the tip of their tail (bui_men_hge_LT2 at 14,20 and
 +    // ntc_men_hge_LT at 14,8, 26x31 from their top centre), so it keeps pointing at the speaker.
-+    {"com_men_nul_*", kMenus, kSelf, kSelf, 1.0f, 5.0f},
++    // In the rooms (Frog Board, shops, guild...) the speaker stands at the left (MenuRoom.setActorPos,
++    // x -230 in 3D) and the scripts leave com_men_nul_2 at its layout place (-220, -70), so in 16:9 its
++    // tail lands on the speaker's arm. It is moved so the tail's tip (about 0,+18 from the pane) is at
++    // the speaker's mouth level, just right of the face (Liara: on Chime's mouth, face not hidden).
++    {"com_men_nul_*", kMenus, kSelf, kSelf, 1.0f, 5.0f, -220.0f, -150.0f, 15.0f},
 +    {"ntc_men_nul", kMenus, kSelf, kSelf, 1.0f, -7.0f},
 +    {"bui_men_nul", kMenus, kAuto, kAuto},
 +    {"bui_hin_nul", kMenus, kAuto, kAuto},
 +    {"opn_win_nul", kMenus, kMid, kMid},          // options
-+    {"ttl_men_nul", kMenus, kMid, kMid},          // menu_title
++    // menu_title's menu (ttl_men_nul) is placed by TitlePaneFixup.
 +    {"com_hlp", kHelpBar, kMid, kMin},
 +    {"com_cha", kTitles, kMax, kMin},             // chapter title, origin bottom-right
 +    {"com_bos_nul", kTitles, kMid, kMin},
@@ -11944,10 +12589,91 @@ index 0000000..f10358f
 +    else g_modelRemaps.erase(model);
 +}
 +
++// Title screen (menu_title.brlyt), whatever the UI scale (Liara). The UI screen is a 4:3 one (x
++// -320..320) shown on a 16:9 picture, so the game logo (tittle_img) looked a third too wide: its width
++// is brought back to 3/4, around its own centre, so it keeps its 4:3 shape. The copyright line
++// (ar_tex, "(C) 2008 SQUARE ENIX...") is drawn at half size, kept against the bottom edge of the
++// screen. The title menu (ttl_men_nul, its window ttl_men_win 80 below it) is kept halfway between
++// the logo and the copyright line, at any "Menus" scale: its window's centre is put there and the
++// menu shrinks around it. Like the scale above, only for the length of the call.
++constexpr float kTitleLogoWidth = 0.75f;
++constexpr float kCopyrightScale = 0.5f;
++constexpr float kTitleMenuWindowY = -80.0f;  // ttl_men_win in ttl_men_nul
++// Bottom of the logo: tittle_img at y 60, 248 high, scaled 0.9 in height by the script (MenuTitle).
++constexpr float kLogoBottom = 60.0f - 248.0f * 0.9f * 0.5f;
++// Top of the copyright line: ar_tex at y -184, 18 high, brought to half size against the bottom (-224).
++constexpr float kCopyrightTop = -224.0f + (-184.0f + 224.0f) * kCopyrightScale + 18.0f * kCopyrightScale * 0.5f;
++constexpr float kTitleMenuCentreY = (kLogoBottom + kCopyrightTop) * 0.5f;
++
++bool TitlePaneFixup(CpuContext* ctx) {
++    const uint32_t pane = ctx->gpr[3];
++    const uint32_t head = Memory::Read32(pane + 0xBCu);
++    float scaleX = 1.0f, scaleY = 1.0f;
++    bool toBottom = false;
++    if (head == 0x74697474u /* "titt" */ && IsNamed(pane, "tittle_img")) {
++        scaleX = kTitleLogoWidth;
++    } else if (head == 0x61725F74u /* "ar_t" */ && IsNamed(pane, "ar_tex")) {
++        scaleX = scaleY = kCopyrightScale;
++        toBottom = true;
++    } else if (head == 0x74746C5Fu /* "ttl_" */ && IsNamed(pane, "ttl_men_nul")) {
++        const float scale = g_scale[kMenus].load(std::memory_order_relaxed);
++        const float ty = ReadF32(pane + 0x30u);
++        const float sx = ReadF32(pane + 0x44u), sy = ReadF32(pane + 0x48u);
++        WriteF32(pane + 0x30u, kTitleMenuCentreY - kTitleMenuWindowY * sy * scale);
++        WriteF32(pane + 0x44u, sx * scale);
++        WriteF32(pane + 0x48u, sy * scale);
++        ++g_scaledDepth;
++        GuestFunctions::BaseTranslation(kPaneCalculateMtx)(ctx);
++        --g_scaledDepth;
++        WriteF32(pane + 0x30u, ty);
++        WriteF32(pane + 0x44u, sx);
++        WriteF32(pane + 0x48u, sy);
++        return true;
++    } else {
++        return false;
++    }
++    const uint32_t drawInfo = ctx->gpr[4];
++    const float tx = ReadF32(pane + 0x2Cu), ty = ReadF32(pane + 0x30u);
++    const float sx = ReadF32(pane + 0x44u), sy = ReadF32(pane + 0x48u);
++    float newTx = tx, newTy = ty;
++    if (toBottom) {
++        float left = ReadF32(drawInfo + 0x34u), top = ReadF32(drawInfo + 0x38u);
++        float right = ReadF32(drawInfo + 0x3Cu), bottom = ReadF32(drawInfo + 0x40u);
++        if (!(std::isfinite(left) && std::isfinite(right) && std::isfinite(top) && std::isfinite(bottom) &&
++              right > left && top != bottom)) {
++            left = -320.0f; right = 320.0f; top = 224.0f; bottom = -224.0f;
++        }
++        const uint32_t parent = Memory::Read32(pane + 0x0Cu);
++        const Affine2D m = ReadAffine(parent != 0 ? parent + 0x84u : drawInfo + 0x04u);
++        const float det = m.a * m.d - m.b * m.c;
++        if (std::fabs(det) > 1e-12f) {
++            const float dx = (left + right) * 0.5f - m.tx, dy = std::fmin(top, bottom) - m.ty;
++            const float lx = (m.d * dx - m.b * dy) / det;
++            const float ly = (-m.c * dx + m.a * dy) / det;
++            newTx = lx + (tx - lx) * scaleX;
++            newTy = ly + (ty - ly) * scaleY;
++        }
++    }
++    WriteF32(pane + 0x2Cu, newTx);
++    WriteF32(pane + 0x30u, newTy);
++    WriteF32(pane + 0x44u, sx * scaleX);
++    WriteF32(pane + 0x48u, sy * scaleY);
++    GuestFunctions::BaseTranslation(kPaneCalculateMtx)(ctx);
++    WriteF32(pane + 0x2Cu, tx);
++    WriteF32(pane + 0x30u, ty);
++    WriteF32(pane + 0x44u, sx);
++    WriteF32(pane + 0x48u, sy);
++    return true;
++}
++
 +} // namespace
 +
 +extern "C" void LifeKing_PaneCalculateMtx(CpuContext* ctx) {
-+    if (g_scaledDepth > 0 || !g_anyScaled.load(std::memory_order_relaxed)) {
++    if (TitlePaneFixup(ctx)) return;
++    // com_men_nul_2 goes on even with nothing scaled: its rule may move it (see kRules).
++    const bool roomTalk = Memory::Read32(ctx->gpr[3] + 0xBCu) == 0x636F6D5Fu /* "com_" */ &&
++                          IsNamed(ctx->gpr[3], "com_men_nul_2");
++    if (g_scaledDepth > 0 || (!g_anyScaled.load(std::memory_order_relaxed) && !roomTalk)) {
 +        NoteModelPane(ctx->gpr[3], g_scaledDepth > 0);
 +        // The band is a child of the help bar, so it is reached here (inside it, or with no scale).
 +        if (Memory::Read32(ctx->gpr[3] + 0xBCu) == 0x636F6D5Fu /* "com_" */ && IsNamed(ctx->gpr[3], "com_hlp_bas")) {
@@ -11981,6 +12707,8 @@ index 0000000..f10358f
 +    const Affine2D m = ReadAffine(parent != 0 ? parent + 0x84u : drawInfo + 0x04u);
 +    const float det = m.a * m.d - m.b * m.c;
 +    const float tx = ReadF32(pane + 0x2Cu), ty = ReadF32(pane + 0x30u);
++    // The x the pane is scaled from (the rule may move a pane the scripts left at its layout x).
++    float baseTx = tx;
 +    const float px = m.a * tx + m.b * ty + m.tx;  // where the pane is on screen
 +    const float py = m.c * tx + m.d * ty + m.ty;
 +
@@ -11998,8 +12726,22 @@ index 0000000..f10358f
 +        }
 +    }
 +    const float scale = g_scale[rule.category].load(std::memory_order_relaxed);
++    float baseTy = ty;
++    const bool moved = rule.toX != 0.0f && std::fabs(tx - rule.fromX) < 0.01f;
++    if (moved) {
++        baseTx = rule.toX;
++        baseTy = rule.toY;
++    }
 +    if (scale == 1.0f || std::fabs(det) <= 1e-12f) {
++        if (moved) {
++            WriteF32(pane + 0x2Cu, baseTx);
++            WriteF32(pane + 0x30u, baseTy);
++        }
 +        GuestFunctions::BaseTranslation(kPaneCalculateMtx)(ctx);
++        if (moved) {
++            WriteF32(pane + 0x2Cu, tx);
++            WriteF32(pane + 0x30u, ty);
++        }
 +        return;
 +    }
 +
@@ -12009,11 +12751,11 @@ index 0000000..f10358f
 +        // The centre of the pane's box, for kBox: from its origin (+0xBA: column + 3 * row, column 0 left,
 +        // row 0 top) and size (+0x4C, +0x50), in the parent's space.
 +        const uint8_t origin = Memory::Read8(pane + 0xBAu);
-+        const float boxX = tx + (1.0f - static_cast<float>(origin % 3u)) * 0.5f * ReadF32(pane + 0x4Cu) * sx;
-+        const float boxY = ty - (1.0f - static_cast<float>(origin / 3u)) * 0.5f * ReadF32(pane + 0x50u) * sy;
++        const float boxX = baseTx + (1.0f - static_cast<float>(origin % 3u)) * 0.5f * ReadF32(pane + 0x4Cu) * sx;
++        const float boxY = baseTy - (1.0f - static_cast<float>(origin / 3u)) * 0.5f * ReadF32(pane + 0x50u) * sy;
 +        const float bx = m.a * boxX + m.b * boxY + m.tx;
 +        const float by = m.c * boxX + m.d * boxY + m.ty;
-+        const float selfX = tx + rule.selfX * sx, selfY = ty + rule.selfY * sy;
++        const float selfX = baseTx + rule.selfX * sx, selfY = baseTy + rule.selfY * sy;
 +        const float qx = m.a * selfX + m.b * selfY + m.tx;  // the kSelf point on screen
 +        const float qy = m.c * selfX + m.d * selfY + m.ty;
 +        const float ax = rule.x == kSelf ? qx : rule.x == kBox ? bx : Pick(rule.x, left, right, px);
@@ -12023,8 +12765,8 @@ index 0000000..f10358f
 +        const float dx = ax - m.tx, dy = ay - m.ty;
 +        const float lx = (m.d * dx - m.b * dy) / det;
 +        const float ly = (-m.c * dx + m.a * dy) / det;
-+        newTx = lx + (tx - lx) * scale;
-+        newTy = ly + (ty - ly) * scale;
++        newTx = lx + (baseTx - lx) * scale;
++        newTy = ly + (baseTy - ly) * scale;
 +        if (!g_logged[ruleIndex]) {
 +            g_logged[ruleIndex] = true;
 +            RT_LOGF("lifeking", "ui scale %s (%s) x%.2f: rect %.0f,%.0f..%.0f,%.0f%s, parent %s scale %.2f,%.2f, "
@@ -12246,6 +12988,19 @@ index 56f6871..7eea5ac 100644
      return prev ? 1 : 0;
  }
  
+diff --git a/runtime/src/hle/os/os_reset.cpp b/runtime/src/hle/os/os_reset.cpp
+index b6dbc53..b023882 100644
+--- a/runtime/src/hle/os/os_reset.cpp
++++ b/runtime/src/hle/os/os_reset.cpp
+@@ -47,7 +47,7 @@ extern "C" void PPCHalt_8012E5A4()
+     RuntimeCrash::WriteCrashArtifacts("halt", "The guest executed PPCHalt.");
+     SetRuntimeExitCode(EXIT_FAILURE);
+     ShowRuntimeFatalPopup("the guest operating system halted the console",
+-                          "Mario Kart Wii executed PPCHalt, which the console only reaches after an "
++                          "The game executed PPCHalt, which the console only reaches after an "
+                           "unrecoverable error.");
+     MarkFatalErrorReported();
+     std::exit(EXIT_FAILURE);
 diff --git a/runtime/src/hle/os/os_thread.cpp b/runtime/src/hle/os/os_thread.cpp
 index d2423e6..e764565 100644
 --- a/runtime/src/hle/os/os_thread.cpp
@@ -14051,7 +14806,7 @@ index 926372f..3169452 100644
      return descriptor;
  }
 diff --git a/runtime/src/settings_overlay.cpp b/runtime/src/settings_overlay.cpp
-index 6c2083a..cf954ee 100644
+index 6c2083a..96490bc 100644
 --- a/runtime/src/settings_overlay.cpp
 +++ b/runtime/src/settings_overlay.cpp
 @@ -1,4 +1,9 @@
@@ -14097,11 +14852,19 @@ index 6c2083a..cf954ee 100644
      default:
          return 0;
      }
-@@ -114,8 +125,12 @@ bool g_skipUnreadyPipelines = RuntimeConfigFile::SkipUnreadyPipelines(true);
+@@ -114,8 +125,20 @@ bool g_skipUnreadyPipelines = RuntimeConfigFile::SkipUnreadyPipelines(true);
  bool g_vsync = RuntimeConfigFile::Vsync();
  bool g_disableCopyFilter = RuntimeConfigFile::DisableCopyFilter(true);
  bool g_showFps = RuntimeConfigFile::ShowFps(true);
 +bool g_maxDetail = RuntimeConfigFile::MaxDetail(true);
++int g_shadowResolution = RuntimeConfigFile::ShadowResolution(4096);
++float g_shadowSoftness = RuntimeConfigFile::ShadowSoftness(0.0f);
++// Shadow distance: 0 near, 1 medium, 2 far ([video] shadow_distance).
++constexpr const char* kShadowDistanceKeys[] = {"near", "medium", "far"};
++int ShadowDistanceLevel(const std::string& key) {
++    return key == "near" ? 0 : key == "far" ? 2 : 1;
++}
++int g_shadowDistance = ShadowDistanceLevel(RuntimeConfigFile::ShadowDistance("medium"));
 +// UI scale per category (My Life as a King), in percent, filled by InitializeRuntimeSettings.
 +constexpr int kMaxUiScaleCategories = 16;
 +int g_uiScalePercent[kMaxUiScaleCategories] = {};
@@ -14111,7 +14874,7 @@ index 6c2083a..cf954ee 100644
  #if defined(__APPLE__)
  bool g_metalFxSpatialUpscaling = RuntimeConfigFile::MetalFxSpatialUpscaling(false);
  #endif
-@@ -177,12 +192,14 @@ Clock::time_point g_bootShaderWaitStart{};
+@@ -177,12 +200,14 @@ Clock::time_point g_bootShaderWaitStart{};
  constexpr uint32_t kBootShaderNoticeThreshold = 100;
  constexpr auto kBootShaderWaitLimit = std::chrono::minutes(3);
  
@@ -14129,7 +14892,7 @@ index 6c2083a..cf954ee 100644
  
  bool IsHighResolutionScale(float scale) {
      return std::fabs(scale - 6.0f) < 0.001f || std::fabs(scale - 8.0f) < 0.001f;
-@@ -435,7 +452,19 @@ const char* KeyBindingName(int scancode) {
+@@ -435,7 +460,19 @@ const char* KeyBindingName(int scancode) {
      }
  }
  
@@ -14150,7 +14913,7 @@ index 6c2083a..cf954ee 100644
  struct RebindState {
      bool active = false;
      bool openPopup = false;
-@@ -467,7 +496,7 @@ void BeginRebind(RebindKind kind, uint16_t target, const char* label, bool secon
+@@ -467,7 +504,7 @@ void BeginRebind(RebindKind kind, uint16_t target, const char* label, bool secon
      std::copy_n(keys, std::min(count, static_cast<int>(g_rebind.keys.size())), g_rebind.keys.begin());
      g_rebind.mouse = SDL_GetMouseState(nullptr, nullptr);
      const int index = PADGetIndexForPort(g_rebind.port);
@@ -14159,7 +14922,7 @@ index 6c2083a..cf954ee 100644
          if (auto* pad = PADGetSDLGamepadForIndex(index)) {
              g_rebind.instance = SDL_GetGamepadID(pad);
              for (int i = 0; i < SDL_GAMEPAD_BUTTON_COUNT; ++i)
-@@ -480,6 +509,18 @@ void BeginRebind(RebindKind kind, uint16_t target, const char* label, bool secon
+@@ -480,6 +517,18 @@ void BeginRebind(RebindKind kind, uint16_t target, const char* label, bool secon
  
  void CompleteRebind(uint32_t value) {
      const auto& capture = g_rebind;
@@ -14178,7 +14941,7 @@ index 6c2083a..cf954ee 100644
      if (capture.kind == RebindKind::Controller) {
          const int index = PADGetIndexForPort(capture.port);
          auto* pad = index >= 0 ? PADGetSDLGamepadForIndex(index) : nullptr;
-@@ -526,9 +567,9 @@ void DrawRebindPrompt() {
+@@ -526,9 +575,9 @@ void DrawRebindPrompt() {
      }
      if (g_rebind.active) {
          ImGui::Text("Rebind: %s", g_rebind.label.c_str());
@@ -14190,7 +14953,7 @@ index 6c2083a..cf954ee 100644
                  ? "Press a keyboard key."
                  : "Press a keyboard key or click a mouse button.");
          ImGui::TextUnformatted("Release any held input first. Backspace or Delete clears the mapping.");
-@@ -541,9 +582,9 @@ void DrawRebindPrompt() {
+@@ -541,9 +590,9 @@ void DrawRebindPrompt() {
          // UI clicks must not become mouse bindings (buttons activate on release).
          const bool overControl = ImGui::IsAnyItemHovered();
          if (g_rebind.active && (clear || remaining <= 0.0f)) {
@@ -14202,7 +14965,7 @@ index 6c2083a..cf954ee 100644
              int count = 0;
              const bool* keys = SDL_GetKeyboardState(&count);
              for (int i = 1; i < std::min(count, static_cast<int>(SDL_SCANCODE_COUNT)) && g_rebind.active; ++i) {
-@@ -553,9 +594,10 @@ void DrawRebindPrompt() {
+@@ -553,9 +602,10 @@ void DrawRebindPrompt() {
              const uint32_t mouse = SDL_GetMouseState(nullptr, nullptr);
              for (int i = 1; i <= 5 && g_rebind.active; ++i)
                  if (!overControl && g_rebind.kind != RebindKind::MuteHotkey &&
@@ -14214,7 +14977,7 @@ index 6c2083a..cf954ee 100644
              auto* pad = SDL_GetGamepadFromID(g_rebind.instance);
              if (pad != nullptr) {
                  for (int i = 0; i < SDL_GAMEPAD_BUTTON_COUNT && g_rebind.active; ++i) {
-@@ -586,17 +628,26 @@ void DrawKeyBinding(const char* label, int scancode, RebindKind kind, uint16_t t
+@@ -586,17 +636,26 @@ void DrawKeyBinding(const char* label, int scancode, RebindKind kind, uint16_t t
  }
  
  void ApplyKeyboardPreset(uint32_t port) {
@@ -14247,7 +15010,7 @@ index 6c2083a..cf954ee 100644
      };
      uint32_t axisCount = 0;
      auto* mappings = PADGetKeyAxisBindings(port, &axisCount);
-@@ -625,11 +676,16 @@ void SetKeyboardActive(uint32_t port, bool active) {
+@@ -625,11 +684,16 @@ void SetKeyboardActive(uint32_t port, bool active) {
  
  void DrawKeyboardSettings(uint32_t port) {
      PushMenuTextWrap();
@@ -14266,7 +15029,7 @@ index 6c2083a..cf954ee 100644
      uint32_t count = 0;
      auto* buttons = PADGetKeyButtonBindings(port, &count);
      ImGui::SeparatorText("Buttons");
-@@ -727,6 +783,37 @@ void DrawExpressionSettings() {
+@@ -727,6 +791,37 @@ void DrawExpressionSettings() {
      }
  }
  
@@ -14304,7 +15067,7 @@ index 6c2083a..cf954ee 100644
  void DrawRumbleSettings() {
      ImGui::Separator();
      if (ImGui::Checkbox("Controller vibration", &g_rumbleEnabled)) {
-@@ -1064,6 +1151,7 @@ void DrawControllerSettings() {
+@@ -1064,6 +1159,7 @@ void DrawControllerSettings() {
      ImGui::Spacing();
      controller_mapping_wizard::DrawSetupList();
      DrawWiiRemoteSetup();
@@ -14312,7 +15075,7 @@ index 6c2083a..cf954ee 100644
      DrawRumbleSettings();
  }
  
-@@ -1074,22 +1162,25 @@ void DrawAudioSettings() {
+@@ -1074,22 +1170,25 @@ void DrawAudioSettings() {
          AudioBackend::Instance().SetMasterVolume(volume);
          RuntimeConfigFile::SetAudioVolume(volume);
      }
@@ -14342,7 +15105,7 @@ index 6c2083a..cf954ee 100644
          const float volume = static_cast<float>(g_voicesVolumePercent) / 100.0f;
          MusicAttenuation::SetVoicesVolume(volume);
          RuntimeConfigFile::SetVoicesVolume(volume);
-@@ -1114,6 +1205,9 @@ void DrawAudioSettings() {
+@@ -1114,6 +1213,9 @@ void DrawAudioSettings() {
              "Runs the AX/DSP voice mix off the game thread. Turn this off if you "
              "suspect an audio problem; the mix then runs inline as it used to.");
      }
@@ -14352,7 +15115,7 @@ index 6c2083a..cf954ee 100644
      ImGui::Separator();
      if (ImGui::Checkbox("Mute game music while external media is playing",
                          &g_attenuateMusicWhenMediaPlays)) {
-@@ -1144,24 +1238,180 @@ void DrawAudioSettings() {
+@@ -1144,24 +1246,180 @@ void DrawAudioSettings() {
      }
  }
  
@@ -14394,7 +15157,10 @@ index 6c2083a..cf954ee 100644
 +            if (saved == kChoices[i].configName) {
 +                return static_cast<int>(i);
 +            }
-+        }
+         }
+-        if (ImGui::Selectable("4:3", !g_widescreen)) {
+-            g_widescreen = false;
+-            RuntimeConfigFile::SetWidescreen(false);
 +        return 0;
 +    }();
 +    static const int atLaunch = selected;
@@ -14439,10 +15205,7 @@ index 6c2083a..cf954ee 100644
 +            if (saved == kChoices[i].configName) {
 +                return static_cast<int>(i);
 +            }
-         }
--        if (ImGui::Selectable("4:3", !g_widescreen)) {
--            g_widescreen = false;
--            RuntimeConfigFile::SetWidescreen(false);
++        }
 +        return 0;
 +    }();
 +    static const int atLaunch = selected;
@@ -14546,7 +15309,7 @@ index 6c2083a..cf954ee 100644
      ImGui::Separator();
      struct EffectFlag {
          const char* label;
-@@ -1172,6 +1422,9 @@ void DrawGraphicsSettings() {
+@@ -1172,6 +1430,9 @@ void DrawGraphicsSettings() {
      }};
  
      for (const auto& effect : kEffectFlags) {
@@ -14556,7 +15319,7 @@ index 6c2083a..cf954ee 100644
          bool disabled = (g_disabledPostProcessingPaths & effect.flag) != 0;
          if (ImGui::Checkbox(effect.label, &disabled)) {
              if (disabled) {
-@@ -1183,8 +1436,10 @@ void DrawGraphicsSettings() {
+@@ -1183,8 +1444,10 @@ void DrawGraphicsSettings() {
              RuntimeConfigFile::SetDisabledPostProcessingPaths(g_disabledPostProcessingPaths);
          }
      }
@@ -14569,7 +15332,7 @@ index 6c2083a..cf954ee 100644
      static constexpr const char* kDisplayModes[] = {
          "Windowed",
          "Borderless fullscreen",
-@@ -1205,13 +1460,13 @@ void DrawGraphicsSettings() {
+@@ -1205,13 +1468,13 @@ void DrawGraphicsSettings() {
              "Requests the closest native-resolution display mode to the output frame "
              "rate (60 Hz, or the frame interpolation target).");
      }
@@ -14586,7 +15349,7 @@ index 6c2083a..cf954ee 100644
          for (int mode = 0; mode < static_cast<int>(kFrameInterpolationModes.size()); ++mode) {
              const bool selected = g_frameInterpolationMode == mode;
              if (ImGui::Selectable(kFrameInterpolationModes[static_cast<size_t>(mode)], selected)) {
-@@ -1286,7 +1541,38 @@ void DrawGraphicsSettings() {
+@@ -1286,7 +1549,81 @@ void DrawGraphicsSettings() {
          RuntimeConfigFile::SetShowFps(g_showFps);
      }
      ImGui::Separator();
@@ -14614,6 +15377,49 @@ index 6c2083a..cf954ee 100644
 +            RuntimeConfigFile::SetMaxDetail(g_maxDetail);
 +        }
 +        ImGui::TextDisabled("Characters and buildings always use their most detailed models.");
++        static constexpr int kShadowResolutions[] = {0, 2048, 4096, 8192};
++        static constexpr const char* kShadowResolutionLabels[] = {"Same as picture", "2048", "4096", "8192"};
++        int shadowResolutionIndex = 0;
++        for (int i = 0; i < static_cast<int>(std::size(kShadowResolutions)); ++i) {
++            if (kShadowResolutions[i] == g_shadowResolution) {
++                shadowResolutionIndex = i;
++            }
++        }
++        if (ImGui::Combo("Shadow resolution", &shadowResolutionIndex, kShadowResolutionLabels,
++                         static_cast<int>(std::size(kShadowResolutionLabels)))) {
++            g_shadowResolution = kShadowResolutions[shadowResolutionIndex];
++            LifeKing_HLE_SetShadowResolution(g_shadowResolution);
++            RuntimeConfigFile::SetShadowResolution(g_shadowResolution);
++        }
++        static constexpr const char* kShadowDistanceLabels[] = {"Near", "Medium", "Far"};
++        if (ImGui::Combo("Shadow distance", &g_shadowDistance, kShadowDistanceLabels,
++                         static_cast<int>(std::size(kShadowDistanceLabels)))) {
++            LifeKing_HLE_SetShadowDistance(g_shadowDistance);
++            RuntimeConfigFile::SetShadowDistance(kShadowDistanceKeys[g_shadowDistance]);
++        }
++        // Soft shadows: the blur's strength in percent (lifeking_shadows.cpp), 0 (off) to 10 by 0.25.
++        {
++            float softness = g_shadowSoftness;
++            ImGui::AlignTextToFramePadding();
++            ImGui::TextUnformatted("Soft shadows");
++            ImGui::SameLine();
++            if (ImGui::Button("-##softShadows")) softness -= 0.25f;
++            ImGui::SameLine();
++            if (softness <= 0.0f) {
++                ImGui::TextUnformatted("Off");
++            } else {
++                ImGui::Text("%.2f%%", softness);
++            }
++            ImGui::SameLine();
++            if (ImGui::Button("+##softShadows")) softness += 0.25f;
++            softness = std::clamp(std::round(softness * 4.0f) / 4.0f, 0.0f, 10.0f);
++            if (softness != g_shadowSoftness) {
++                g_shadowSoftness = softness;
++                LifeKing_HLE_SetShadowSoftness(g_shadowSoftness);
++                RuntimeConfigFile::SetShadowSoftness(g_shadowSoftness);
++            }
++        }
++        ImGui::TextDisabled("Shadows under the characters: a higher resolution gives finer edges, soft shadows blur them.");
 +        DrawUiScaleSettings();
 +    }
 +    // Fast loading (black screens between areas go by faster) is always on. Holding a key or
@@ -14626,7 +15432,7 @@ index 6c2083a..cf954ee 100644
  }
  
  void DrawFpsOverlay() {
-@@ -1390,7 +1676,7 @@ void DrawStartupScreen() {
+@@ -1390,7 +1727,7 @@ void DrawStartupScreen() {
                                          ImGuiWindowFlags_NoBringToFrontOnFocus;
      if (ImGui::Begin("Wiicompiled Startup", nullptr, kFlags)) {
          ImGui::SetWindowFontScale(1.25f);
@@ -14635,7 +15441,7 @@ index 6c2083a..cf954ee 100644
          const ImVec2 titleSize = ImGui::CalcTextSize(kTitle);
          const float titleX = std::max(0.0f, (viewport->Size.x - titleSize.x) * 0.5f);
          const float startY = std::max(0.0f, (viewport->Size.y - titleSize.y) * 0.5f);
-@@ -1485,7 +1771,7 @@ void DrawTopBar() {
+@@ -1485,7 +1822,7 @@ void DrawTopBar() {
      ImGui::End();
      if (!ImGui::BeginMainMenuBar()) return;
  
@@ -14644,7 +15450,7 @@ index 6c2083a..cf954ee 100644
      ImGui::Separator();
      const auto resolutionIt = std::find_if(kResolutions.begin(), kResolutions.end(), [](const ResolutionItem& item) {
          return std::fabs(item.scale - g_resolutionScale) < 0.001f;
-@@ -1533,6 +1819,18 @@ void DrawTopBar() {
+@@ -1533,6 +1870,18 @@ void DrawTopBar() {
          ImGui::EndMenu();
      }
  
@@ -14663,12 +15469,15 @@ index 6c2083a..cf954ee 100644
      const ImGuiStyle& style = ImGui::GetStyle();
      const float hideWidth = ImGui::CalcTextSize("Hide (F10)").x + style.FramePadding.x * 2.0f;
      const float exitWidth = ImGui::CalcTextSize("X").x + style.FramePadding.x * 2.0f;
-@@ -1627,6 +1925,13 @@ void InitializeRuntimeSettings() noexcept {
+@@ -1627,6 +1976,16 @@ void InitializeRuntimeSettings() noexcept {
      MusicAttenuation::SetVoicesVolume(static_cast<float>(g_voicesVolumePercent) / 100.0f);
      MusicAttenuation::SetEnabled(g_attenuateMusicWhenMediaPlays);
      RuntimeGameGraphicsOptions::SetDisabledPostProcessingPaths(g_disabledPostProcessingPaths);
 +    GX_HLE_SetFieldOfViewScale(static_cast<float>(g_fieldOfViewPercent) / 100.0f);
 +    LifeKing_HLE_SetMaxDetail(g_maxDetail);
++    LifeKing_HLE_SetShadowResolution(g_shadowResolution);
++    LifeKing_HLE_SetShadowSoftness(g_shadowSoftness);
++    LifeKing_HLE_SetShadowDistance(g_shadowDistance);
 +    for (int i = 0; i < std::min(LifeKing_HLE_UiScaleCategoryCount(), kMaxUiScaleCategories); ++i) {
 +        const float scale = RuntimeConfigFile::UiScale(LifeKing_HLE_UiScaleCategoryKey(i), 1.0f);
 +        g_uiScalePercent[i] = static_cast<int>(std::lround(scale * 100.0f));
@@ -14677,7 +15486,7 @@ index 6c2083a..cf954ee 100644
  #if defined(__APPLE__)
      aurora_set_metalfx_spatial(g_metalFxSpatialUpscaling);
  #endif
-@@ -1658,11 +1963,17 @@ void HandleEvents(const AuroraEvent* events) noexcept {
+@@ -1658,11 +2017,17 @@ void HandleEvents(const AuroraEvent* events) noexcept {
              continue;
          }
          controller_mapping_wizard::HandleSdlEvent(ev->sdl);
@@ -14696,7 +15505,7 @@ index 6c2083a..cf954ee 100644
          if (!g_rebind.active && IsToggleKey(ev->sdl, SDL_SCANCODE_F10)) {
              SetTopBarVisible(!g_topBarVisible);
              ApplyInputBlockState();
-@@ -1727,11 +2038,25 @@ void Draw() noexcept {
+@@ -1727,11 +2092,25 @@ void Draw() noexcept {
      DrawExitPrompt();
      DrawRestartPrompt();
      controller_mapping_wizard::Draw();

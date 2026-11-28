@@ -53,6 +53,22 @@ RULES = [
     # smiley...); the runtime makes it positive again and applies the setting.
     (b"setObjectScale(_iconID, scale, scale, scale)", b"setObjectScale(_iconID,-scale, scale, scale)", 1,
      "icons over characters marked for the UI scale"),
+    # Not 60 Hz rules either: title screen wishes (Liara). The boot save check (STEP_CHECKFILEBOOT)
+    # no longer writes nor opens its "Checking Wii system memory" window (addText opens it too), so the screen stays black while the
+    # game looks for a save (an error still opens its own window). The title menu no longer offers
+    # "Purchase Add-on content" (the shop needs the Wii Shop servers; the add-on content is read
+    # from the dlc folder instead, see install_dlc.py).
+    (b"case STEP_CHECKFILEBOOT:\t\r\n\t\t\t\tif ( _timer == 20 ) {\r\n\t\t\t\t\t_menuSystem.clear();\r\n"
+     b"\t\t\t\t\t_menuSystem.addText( ::TXT_MENU_NAND_CHECK );\t\r\n\t\t\t\t\t_menuSystem.open();",
+     b"case STEP_CHECKFILEBOOT:\t\r\n\t\t\t\tif ( _timer == 20 ) {\r\n\t\t\t\t\t_menuSystem.clear();\r\n"
+     b"\t\t\t\t\t                                             \t\r\n\t\t\t\t\t                   ", 1,
+     "no save check window at boot"),
+    (b"_window.addTextSelect( TXT_MENU_TITLE_CONTENT_STORE, STEP_CONTENT_STORE );",
+     b"                                                                          ", 2,
+     "no Purchase Add-on content in the title menu"),
+    (b"_talkWindow.addTextSelect( TXT_MENU_CAS_menuH, additionalDataShop );",
+     b"                                                                    ", 1,
+     "no Purchase Add-on content in Chime's menu (castle)"),
 ]
 
 

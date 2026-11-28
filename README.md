@@ -5,7 +5,7 @@ game from 2008. The port is a **static recompilation**, not an emulator: the gam
 translated to C++ by [WiiCompiled](https://github.com/patchzyy/Wiicompiled) and runs on its runtime,
 with rendering through [aurora](https://github.com/encounter/aurora) (Direct3D 12 or Vulkan).
 
-Current version: **0.4**.
+Current version: **0.5** (the changes marked "after v0.5" are in this branch, not yet in a release).
 
 > **No game files are in this repository, and none are distributed.** To build and play KingLife you
 > need your own dump of the game (and of its add-on content, if you want it).
@@ -26,6 +26,13 @@ Current version: **0.4**.
   to keep far models at full detail, and "UI scale": one slider per part of the interface (clock,
   notifications, dialogue, system messages, keyboard, menus, help bar, titles, icons over
   characters, room banner), 50-100 %, each element staying in its corner or centre.
+- **Character shadows** (after v0.5): sharper shadows ("Shadow resolution" up to 8192), shadows
+  that reach further ("Shadow distance" Near / Medium / Far, following the field of view) and
+  "Soft shadows" from Off to 10 %, all in F10 > Graphics.
+- **Straight to the title screen** (after v0.5): no Wii strap screen, no "Checking Wii system
+  memory" window, the logo and copyright drawn at their 4:3 shape on the 16:9 picture, the title
+  menu centred between them, and no "Purchase Add-on content" entry (the Wii Shop is gone; add-on
+  content comes from your own dump).
 - Sound, and a native `KingLife.exe` with its own icon.
 
 ## What you need
@@ -53,7 +60,8 @@ The full steps (WiiCompiled clone and patches, game data layout, build script) a
 - `config/`, `src/`, `include/`: a decompilation of the game, built with
   [decomp-toolkit](https://github.com/encounter/decomp-toolkit). It is the reference used to name the
   game's functions for the port.
-- `docs/NOTES.md`: the project notes (how the port was made, 60 FPS work, controller, DLC).
+- `docs/NOTES.md`: the project notes (how the port was made, 60 FPS work, controller, DLC, UI scale,
+  shadows, title screen).
 
 ## Licence
 

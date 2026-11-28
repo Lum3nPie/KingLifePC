@@ -1,4 +1,4 @@
-# KingLife: My Life as a King PC port (v0.4)
+# KingLife: My Life as a King PC port (v0.5)
 
 A native Windows build of *My Life as a King* (WiiWare, PAL, `WFCP`), made by **static
 recompilation**: the game's PowerPC code is translated to C++ by
@@ -43,6 +43,12 @@ logic is tied to its frames, it slowed the game and the music in heavy scenes (C
 F10 > Graphics also has (new in v0.5) "Field of view", "Max detail (LOD)" and "UI scale", one
 slider per UI category, saved in the config and applied at once. A field of view above 100 % can put
 the camera under the ground in some cutscenes.
+
+After v0.5 (not yet in a release): "Shadow resolution", "Shadow distance" and "Soft shadows" for the
+characters' shadows; the game starts on the title screen without the Wii strap screen or the save
+check window; the logo, copyright and title menu keep their 4:3 shape on the 16:9 picture; the
+"Purchase Add-on content" entries are gone (title menu and Chime); talk windows beside a speaker
+point their tail at the speaker at every UI scale.
 
 ## Building
 
